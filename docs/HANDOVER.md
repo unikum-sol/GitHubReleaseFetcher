@@ -1,6 +1,6 @@
 # Übergabe – Stand 16.11.2026
 
-Diese Datei fasst zusammen, was in der Cloud-Sitzung gemacht wurde und wo die Arbeit weitergeht. Den Design-Prozess im Detail (Council, Bewertungen, Anforderungen) beschreibt [`DESIGN_COUNCIL.md`](DESIGN_COUNCIL.md).
+Diese Datei fasst zusammen, was in der Cloud-Sitzung gemacht wurde und wo die Arbeit weitergeht. Den Design-Prozess im Detail (Council, Bewertungen, Anforderungen) beschreibt [`DESIGN_COUNCIL.md`](DESIGN_COUNCIL.md). Die vollständige Aufgabenliste steht in [`TODO.md`](TODO.md).
 
 ---
 
