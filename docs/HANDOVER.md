@@ -2,6 +2,14 @@
 
 Diese Datei fasst zusammen, was in der Cloud-Sitzung gemacht wurde und wo die Arbeit weitergeht. Den Design-Prozess im Detail (Council, Bewertungen, Anforderungen) beschreibt [`DESIGN_COUNCIL.md`](DESIGN_COUNCIL.md). Die vollständige Aufgabenliste steht in [`TODO.md`](TODO.md).
 
+> **Nachtrag (16.11.2026, abends, Windows-Sitzung):**
+> - Die Abschnitte 2 bis 4 unten sind erledigt.
+> - Gebaut wurde unter Windows 10 mit dem .NET 10 SDK, fehlerfrei. Der HTTP-415-Fix ist live bestätigt.
+> - Die Punkte aus Abschnitt 3 wurden geprüft und die dabei gefundenen Fehler behoben.
+> - Der Design-Council hat drei Runden durchlaufen und ist mit **4 × 8/10** abgeschlossen.
+> - Das README ist aktualisiert und enthält Screenshots (`docs/screenshots`).
+> - Offen sind nur noch die Punkte in [`TODO.md`](TODO.md): Versionsnummer, Release, die nicht testbaren Punkte (DPI 125/150 %, Hoher Kontrast, Tray-Menü) und optionale 9/10-Anregungen.
+
 ---
 
 ## 1. Erledigt

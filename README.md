@@ -8,9 +8,16 @@
 
 A small Windows tray tool (C# / .NET 8 WinForms) that automatically downloads the **latest release** and the **latest pre-release** of any number of GitHub repositories, including all **assets** and the **source code** (`.zip` and `.tar.gz`).
 
+![Main window, dark](docs/screenshots/main-dark.png)
+
+| Light | Settings |
+|---|---|
+| ![Main window, light](docs/screenshots/main-light.png) | ![Settings panel](docs/screenshots/settings-dark.png) |
+
 ### Features
 
-- Graphical user interface, language switchable between **English** and **German**
+- Graphical user interface in a calm "instrument panel" style, **light / dark / follow Windows** (high contrast is respected), language switchable between **English** and **German**
+- Four status tiles: state, countdown to the next check, reachable repositories, remaining API requests
 - Minimizing or closing the window (X) sends the app to the **system tray**; exiting is **only possible via the tray menu**
 - Tray right-click menu with status information (state, last/next check, reachable repositories, remaining API requests), "Check now" and "Exit"
 - Selectable **download folder** (stored persistently)
@@ -19,11 +26,14 @@ A small Windows tray tool (C# / .NET 8 WinForms) that automatically downloads th
   - `https://github.com/owner/repo` (also without `https://`, with `www.` or `.git`)
   - release page links like `https://github.com/owner/repo/releases` or `.../releases/tag/v1.2.3`
   - several entries at once (separated by space, comma, semicolon or new line)
-- **Repository list** in a separate window (incl. status, removing entries)
-- Display of **reachable / not reachable** repositories – an unreachable repository never causes an error, the remaining ones are processed normally
+- **Repository table** with status, latest release / pre-release, last check and details; sortable, multi-select
+  - Remove with **Del** or the context menu (with confirmation; downloaded files are kept)
+  - Context menu / double-click: open releases on GitHub, open the repository's download folder, copy the name
+- Status shows the **cause** when a repository is not reachable: *Not found (404)*, *Token invalid (401)*, *Access denied (403)*, *Network error* – with a short hint what to do. An unreachable repository never causes an error, the remaining ones are processed normally
 - Selectable **check interval in hours** (default: 3 h)
 - Optional **GitHub token** (stored encrypted with Windows DPAPI, only readable by your Windows user)
-- **Detailed status area** (table + live activity view)
+- Collapsible **activity console** (warnings and errors colored) and inline notices instead of message boxes
+- Keyboard: **F5** check now, **Esc** close settings, **Del** remove selected, **Enter** add repository / save token
 - **Log file with timestamps** covering the last month (older entries are removed automatically), openable via button
 - Already downloaded files are skipped; **nothing is deleted**
 
@@ -68,12 +78,12 @@ After clicking "Save token" the token is validated once.
 
 | What | Where |
 |---|---|
-| Settings (folder, repositories, interval, language, encrypted token) | `%APPDATA%\GitHubReleaseFetcher\settings.json` |
+| Settings (folder, repositories, interval, language, theme, encrypted token) | `%APPDATA%\GitHubReleaseFetcher\settings.json` |
 | Log (last 31 days) | `%APPDATA%\GitHubReleaseFetcher\log.txt` |
 
 ### Build
 
-Requirements: Windows, [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)
+Requirements: Windows, [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) or newer
 
 ```bat
 build.bat
@@ -101,9 +111,12 @@ Result: `publish\GitHubReleaseFetcher.exe` – a single file that runs without a
 
 Ein kleines Windows-Tray-Tool (C# / .NET 8 WinForms), das automatisch den **neuesten Release** und den **neuesten Pre-Release** beliebig vieler GitHub-Repositories herunterlädt – inklusive aller **Assets** und des **Quellcodes** (`.zip` und `.tar.gz`).
 
+Screenshots: siehe [oben](#english) bzw. [`docs/screenshots`](docs/screenshots).
+
 ### Funktionen
 
-- Grafische Oberfläche, Sprache umschaltbar zwischen **Englisch** und **Deutsch**
+- Grafische Oberfläche im ruhigen „Instrumententafel“-Stil, **Hell / Dunkel / wie Windows** (hoher Kontrast wird berücksichtigt), Sprache umschaltbar zwischen **Englisch** und **Deutsch**
+- Vier Statuskacheln: Zustand, Countdown bis zur nächsten Prüfung, erreichbare Repositories, verbleibende API-Anfragen
 - Minimieren oder Schließen (X) schickt das Programm in den **Infobereich (Tray)**; Beenden ist **nur über das Tray-Menü** möglich
 - Rechtsklick-Menü am Tray-Symbol mit Statusinformationen (Zustand, letzte/nächste Prüfung, erreichbare Repositories, verbleibende API-Anfragen), „Jetzt prüfen“ und „Beenden“
 - Auswählbarer **Download-Ordner** (wird dauerhaft gespeichert)
@@ -112,11 +125,14 @@ Ein kleines Windows-Tray-Tool (C# / .NET 8 WinForms), das automatisch den **neue
   - `https://github.com/owner/repo` (auch ohne `https://`, mit `www.` oder `.git`)
   - Release-Seiten-Links wie `https://github.com/owner/repo/releases` oder `.../releases/tag/v1.2.3`
   - mehrere Einträge auf einmal (getrennt durch Leerzeichen, Komma, Semikolon oder Zeilenumbruch)
-- **Repository-Liste** in einem eigenen Fenster (inkl. Status, Einträge entfernen)
-- Anzeige **erreichbar / nicht erreichbar** – ein nicht erreichbares Repository verursacht nie einen Fehler, die übrigen werden normal verarbeitet
+- **Repository-Tabelle** mit Status, neuestem Release / Pre-Release, letzter Prüfung und Details; sortierbar, Mehrfachauswahl
+  - Entfernen mit **Entf** oder über das Kontextmenü (mit Bestätigung; heruntergeladene Dateien bleiben erhalten)
+  - Kontextmenü / Doppelklick: Releases auf GitHub öffnen, Download-Ordner des Repositorys öffnen, Namen kopieren
+- Der Status nennt die **Ursache**, wenn ein Repository nicht erreichbar ist: *Nicht gefunden (404)*, *Token ungültig (401)*, *Zugriff verweigert (403)*, *Netzwerkfehler* – mit kurzem Hinweis, was zu tun ist. Ein nicht erreichbares Repository verursacht nie einen Fehler, die übrigen werden normal verarbeitet
 - Einstellbares **Prüfintervall in Stunden** (Standard: 3 h)
 - Optionaler **GitHub-Token** (verschlüsselt per Windows-DPAPI gespeichert, nur für deinen Windows-Benutzer lesbar)
-- **Detaillierter Statusbereich** (Tabelle + Live-Aktivitätsanzeige)
+- Einklappbare **Aktivitäts-Konsole** (Warnungen und Fehler farbig) und Hinweise direkt im Fenster statt Meldungsfenstern
+- Tastatur: **F5** jetzt prüfen, **Esc** Einstellungen schließen, **Entf** Auswahl entfernen, **Enter** Repository hinzufügen / Token speichern
 - **Log-Datei mit Zeitstempeln** über den letzten Monat (ältere Einträge werden automatisch entfernt), per Button zu öffnen
 - Bereits heruntergeladene Dateien werden übersprungen; **es wird nichts gelöscht**
 
@@ -161,12 +177,12 @@ Nach „Token speichern“ wird der Token einmalig geprüft.
 
 | Was | Wo |
 |---|---|
-| Einstellungen (Ordner, Repositories, Intervall, Sprache, verschlüsselter Token) | `%APPDATA%\GitHubReleaseFetcher\settings.json` |
+| Einstellungen (Ordner, Repositories, Intervall, Sprache, Erscheinungsbild, verschlüsselter Token) | `%APPDATA%\GitHubReleaseFetcher\settings.json` |
 | Log (letzte 31 Tage) | `%APPDATA%\GitHubReleaseFetcher\log.txt` |
 
 ### Bauen
 
-Voraussetzungen: Windows, [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)
+Voraussetzungen: Windows, [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) oder neuer
 
 ```bat
 build.bat
