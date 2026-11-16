@@ -7,42 +7,91 @@ public static class Lang
 
     private static readonly Dictionary<string, (string En, string De)> T = new()
     {
-        // ---- window / groups
+        // ---- window / areas
         ["app_title"] = ("GitHub Release Fetcher", "GitHub Release Fetcher"),
         ["grp_settings"] = ("Settings", "Einstellungen"),
         ["grp_repos"] = ("Repositories", "Repositories"),
-        ["grp_status"] = ("Status", "Status"),
-        ["grp_details"] = ("Detailed status / activity", "Detaillierter Status / Aktivität"),
+        ["grp_activity"] = ("Activity", "Aktivität"),
 
-        // ---- settings
-        ["lbl_folder"] = ("Download folder:", "Download-Ordner:"),
+        // ---- header / actions
+        ["btn_settings"] = ("Settings", "Einstellungen"),
+        ["btn_check_now"] = ("Check now", "Jetzt prüfen"),
+        ["btn_checking"] = ("Checking...", "Prüfe..."),
+        ["btn_ok"] = ("OK", "OK"),
+        ["btn_cancel"] = ("Cancel", "Abbrechen"),
+        ["btn_close"] = ("Close", "Schließen"),
+
+        // ---- settings panel
+        ["sec_theme"] = ("Appearance", "Erscheinungsbild"),
+        ["theme_system"] = ("System", "System"),
+        ["theme_light"] = ("Light", "Hell"),
+        ["theme_dark"] = ("Dark", "Dunkel"),
+        ["sec_language"] = ("Language", "Sprache"),
+        ["sec_folder"] = ("Download folder", "Download-Ordner"),
+        ["folder_placeholder"] = ("No folder selected", "Kein Ordner ausgewählt"),
         ["btn_browse"] = ("Browse...", "Auswählen..."),
         ["btn_open_folder"] = ("Open", "Öffnen"),
-        ["lbl_token"] = ("GitHub token:", "GitHub-Token:"),
-        ["btn_save_token"] = ("Save token", "Token speichern"),
-        ["btn_remove_token"] = ("Remove token", "Token entfernen"),
-        ["token_set"] = ("Token: saved (encrypted)", "Token: gespeichert (verschlüsselt)"),
-        ["token_not_set"] = ("Token: not set (limit 60 requests/h)", "Token: nicht gesetzt (Limit 60 Anfragen/h)"),
-        ["lbl_interval"] = ("Check interval (hours):", "Prüfintervall (Stunden):"),
-        ["lbl_language"] = ("Language:", "Sprache:"),
+        ["sec_interval"] = ("Check interval", "Prüfintervall"),
         ["interval_ok"] = ("Effective interval: {0} h", "Effektives Intervall: {0} h"),
         ["interval_adjusted"] = ("Effective interval: {0} h (raised because of GitHub API limit for {1} repositories)",
                                  "Effektives Intervall: {0} h (erhöht wegen GitHub-API-Limit bei {1} Repositories)"),
+        ["sec_token"] = ("GitHub token (optional)", "GitHub-Token (optional)"),
+        ["token_placeholder"] = ("Paste personal access token", "Personal Access Token einfügen"),
+        ["btn_save_token"] = ("Save token", "Token speichern"),
+        ["btn_remove_token"] = ("Remove", "Entfernen"),
+        ["token_set"] = ("Token saved (encrypted)", "Token gespeichert (verschlüsselt)"),
+        ["token_not_set"] = ("No token - limit 60 requests/h", "Kein Token - Limit 60 Anfragen/h"),
+        ["token_validating"] = ("Checking token with GitHub...", "Token wird bei GitHub geprüft..."),
+        ["token_hint"] = ("Without token GitHub allows 60 requests per hour, with token 5,000. Needed for private repositories (read access to Contents). Stored encrypted for your Windows user only.",
+                          "Ohne Token erlaubt GitHub 60 Anfragen pro Stunde, mit Token 5.000. Nötig für private Repositories (Lesezugriff auf Contents). Wird verschlüsselt nur für deinen Windows-Benutzer gespeichert."),
 
-        // ---- repos
-        ["lbl_repo_input"] = ("Repository (owner/repo, URL or release page link):", "Repository (owner/repo, URL oder Release-Seiten-Link):"),
+        // ---- repositories
+        ["repo_placeholder"] = ("owner/repo, GitHub URL or release link - several separated by space or comma",
+                                "owner/repo, GitHub-URL oder Release-Link - mehrere durch Leerzeichen oder Komma getrennt"),
         ["btn_add"] = ("Add", "Hinzufügen"),
-        ["btn_show_list"] = ("Show repository list", "Repository-Liste anzeigen"),
-        ["btn_check_now"] = ("Check now", "Jetzt prüfen"),
-        ["btn_open_log"] = ("Open log", "Log öffnen"),
+        ["btn_remove"] = ("Remove from list", "Aus Liste entfernen"),
+        ["btn_remove_confirm"] = ("Remove", "Entfernen"),
+        ["list_count"] = ("{0} repositories", "{0} Repositories"),
+        ["grid_empty"] = ("No repositories yet.\nEnter owner/repo or a GitHub link above and press Enter.",
+                          "Noch keine Repositories.\nOben owner/repo oder einen GitHub-Link eingeben und Enter drücken."),
+        ["confirm_remove"] = ("Remove {0} repository/repositories from the list?\n\nAlready downloaded files are NOT deleted.",
+                              "{0} Repository/Repositories aus der Liste entfernen?\n\nBereits heruntergeladene Dateien werden NICHT gelöscht."),
+        ["msg_added"] = ("{0} added", "{0} hinzugefügt"),
+        ["msg_removed"] = ("{0} removed from the list (files kept)", "{0} aus der Liste entfernt (Dateien bleiben erhalten)"),
+
+        // ---- activity
+        ["btn_open_log"] = ("Open log file", "Log-Datei öffnen"),
+        ["btn_show_log"] = ("Show activity", "Aktivität anzeigen"),
+        ["btn_hide_log"] = ("Hide activity", "Aktivität ausblenden"),
 
         // ---- list columns
         ["col_repo"] = ("Repository", "Repository"),
         ["col_status"] = ("Status", "Status"),
-        ["col_release"] = ("Latest release", "Neuester Release"),
-        ["col_prerelease"] = ("Latest pre-release", "Neuester Pre-Release"),
+        ["col_release"] = ("Release", "Release"),
+        ["col_prerelease"] = ("Pre-release", "Pre-Release"),
         ["col_lastcheck"] = ("Last check", "Letzte Prüfung"),
         ["col_details"] = ("Details", "Details"),
+
+        // ---- instrument tiles
+        ["tile_state"] = ("Status", "Status"),
+        ["tile_progress"] = ("{0} / {1}", "{0} / {1}"),
+        ["tile_until"] = ("until {0}", "bis {0}"),
+        ["tile_token_on"] = ("Token active - 5,000 requests/h", "Token aktiv - 5.000 Anfragen/h"),
+        ["tile_token_off"] = ("No token - 60 requests/h", "Kein Token - 60 Anfragen/h"),
+        ["tile_next"] = ("Next check", "Nächste Prüfung"),
+        ["tile_next_sub"] = ("at {0}  ·  last {1}", "um {0}  ·  zuletzt {1}"),
+        ["tile_last"] = ("last {0}", "zuletzt {0}"),
+        ["tile_running"] = ("running", "läuft"),
+        ["tile_reach"] = ("Reachable", "Erreichbar"),
+        ["tile_no_repos"] = ("no repositories yet", "noch keine Repositories"),
+        ["tile_notreach"] = ("{0} not reachable", "{0} nicht erreichbar"),
+        ["tile_allreach"] = ("all reachable", "alle erreichbar"),
+        ["tile_not_checked"] = ("not all checked yet", "noch nicht alle geprüft"),
+        ["tile_api"] = ("API requests left", "API-Anfragen übrig"),
+        ["tile_api_sub"] = ("of {0}  {1}", "von {0}  {1}"),
+        ["tile_reset"] = ("·  reset {0}", "·  Reset {0}"),
+        ["tile_api_unknown"] = ("known after first check (60/h)", "bekannt nach erster Prüfung (60/h)"),
+        ["tile_api_unknown_token"] = ("known after first check (5,000/h)", "bekannt nach erster Prüfung (5.000/h)"),
 
         // ---- states
         ["st_pending"] = ("Waiting", "Wartet"),
@@ -52,11 +101,10 @@ public static class Lang
         ["st_notreachable"] = ("Not reachable", "Nicht erreichbar"),
         ["st_ratelimited"] = ("Postponed (API limit)", "Verschoben (API-Limit)"),
 
-        // ---- status line
-        ["status_idle"] = ("Idle", "Bereit"),
+        // ---- status
+        ["status_idle"] = ("Ready", "Bereit"),
         ["status_checking"] = ("Checking repositories...", "Prüfe Repositories..."),
-        ["status_line"] = ("State: {0}  |  Last check: {1}  |  Next check: {2}  |  Reachable: {3}/{4}  |  API requests left: {5}",
-                           "Zustand: {0}  |  Letzte Prüfung: {1}  |  Nächste Prüfung: {2}  |  Erreichbar: {3}/{4}  |  API-Anfragen übrig: {5}"),
+        ["status_paused"] = ("Paused", "Pausiert"),
         ["never"] = ("never", "nie"),
         ["unknown"] = ("unknown", "unbekannt"),
 
@@ -71,14 +119,6 @@ public static class Lang
         ["tray_exit"] = ("Exit", "Beenden"),
         ["tray_balloon"] = ("Still running in the system tray. Exit via right-click on the tray icon.",
                             "Läuft weiter im Infobereich. Beenden über Rechtsklick auf das Tray-Symbol."),
-
-        // ---- repo list window
-        ["list_title"] = ("Repository list", "Repository-Liste"),
-        ["btn_remove"] = ("Remove selected", "Ausgewählte entfernen"),
-        ["btn_close"] = ("Close", "Schließen"),
-        ["list_count"] = ("{0} repositories", "{0} Repositories"),
-        ["confirm_remove"] = ("Remove {0} repository/repositories from the list?\n(Already downloaded files are NOT deleted.)",
-                              "{0} Repository/Repositories aus der Liste entfernen?\n(Bereits heruntergeladene Dateien werden NICHT gelöscht.)"),
 
         // ---- messages
         ["msg_invalid_repo"] = ("Invalid input (ignored): {0}", "Ungültige Eingabe (ignoriert): {0}"),

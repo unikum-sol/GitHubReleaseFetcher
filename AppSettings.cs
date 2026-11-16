@@ -16,6 +16,8 @@ public sealed class AppSettings
     public string Language { get; set; } = "en";
     /// <summary>"system" (follow Windows), "light" or "dark".</summary>
     public string Theme { get; set; } = "system";
+    /// <summary>Activity log area expanded (true) or collapsed to one line (false).</summary>
+    public bool LogExpanded { get; set; }
     public string EncryptedToken { get; set; } = "";
     public DateTime? LastCheckUtc { get; set; }
 

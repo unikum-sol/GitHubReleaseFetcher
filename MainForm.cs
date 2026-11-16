@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Reflection;
+using System.Runtime.InteropServices;
 
 namespace GitHubReleaseFetcher;
 
@@ -10,6 +12,7 @@ public sealed class MainForm : Form
     private readonly ReleaseChecker _checker = new();
     private readonly Dictionary<string, RepoStatus> _status = new(StringComparer.OrdinalIgnoreCase);
     private readonly System.Windows.Forms.Timer _timer = new() { Interval = 15000 };
+    private readonly System.Windows.Forms.Timer _noticeTimer = new() { Interval = 10000 };
     private CancellationTokenSource _cts = new();
     private bool _checking;
     private bool _exitRequested;
@@ -18,42 +21,66 @@ public sealed class MainForm : Form
     private DateTime _nextCheckUtc;
     private DateTime? _rateLimitUntilUtc;
     private DateTime _lastLogCleanup = DateTime.MinValue;
+    private int _progressDone, _progressTotal;
+    private string _progressRepo = "";
 
-    // ---------------- controls
-    private readonly GroupBox _grpSettings = new() { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Padding = new Padding(8) };
-    private readonly GroupBox _grpRepos = new() { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Padding = new Padding(8) };
-    private readonly GroupBox _grpStatus = new() { Dock = DockStyle.Fill, Padding = new Padding(8) };
+    // ---------------- layout
+    private readonly HeaderBar _header = new() { Dock = DockStyle.Top };
+    private readonly ThemedPanel _body = new() { Dock = DockStyle.Fill };
+    private readonly TilesPanel _tiles = new() { Dock = DockStyle.Top };
+    private readonly StatTile _tileState = new();
+    private readonly StatTile _tileNext = new();
+    private readonly StatTile _tileReach = new();
+    private readonly StatTile _tileApi = new();
+    private readonly CardPanel _repoCard = new() { Dock = DockStyle.Fill, Number = "01" };
+    private readonly CardPanel _activityCard = new() { Dock = DockStyle.Bottom, Number = "02" };
+    private readonly ThemedPanel _settingsPanel = new() { BackRole = ThemedPanel.Role.Surface, Visible = false };
 
-    private readonly Label _lblFolder = new() { AutoSize = true, Anchor = AnchorStyles.Left };
-    private readonly TextBox _txtFolder = new() { ReadOnly = true, Anchor = AnchorStyles.Left | AnchorStyles.Right };
-    private readonly Button _btnBrowse = new() { AutoSize = true };
-    private readonly Button _btnOpenFolder = new() { AutoSize = true };
+    // ---------------- header
+    private readonly FlatButton _btnSettings = new() { Kind = ButtonKind.Ghost, IconGlyph = Theme.IcoSettings, AutoSize = true };
+    private readonly FlatButton _btnCheckNow = new() { Kind = ButtonKind.Primary, IconGlyph = Theme.IcoSync, Hint = "F5", AutoSize = true };
 
-    private readonly Label _lblToken = new() { AutoSize = true, Anchor = AnchorStyles.Left };
-    private readonly TextBox _txtToken = new() { UseSystemPasswordChar = true, Anchor = AnchorStyles.Left | AnchorStyles.Right };
-    private readonly Button _btnSaveToken = new() { AutoSize = true };
-    private readonly Button _btnRemoveToken = new() { AutoSize = true };
-    private readonly Label _lblTokenState = new() { AutoSize = true, Anchor = AnchorStyles.Left };
+    // ---------------- repositories
+    private readonly InputBox _txtRepo = new() { Dock = DockStyle.Fill };
+    private readonly FlatButton _btnAdd = new() { Kind = ButtonKind.Secondary, IconGlyph = Theme.IcoAdd, AutoSize = true, Dock = DockStyle.Right };
+    private readonly NoticeLine _repoNotice = new() { Dock = DockStyle.Top };
+    private readonly ThemedGrid _grid = new() { Dock = DockStyle.Fill, StateColumn = 1 };
+    private readonly ContextMenuStrip _gridMenu = new();
+    private readonly ToolStripMenuItem _miRemove = new() { ShortcutKeyDisplayString = "Del" };
 
-    private readonly Label _lblInterval = new() { AutoSize = true, Anchor = AnchorStyles.Left };
-    private readonly NumericUpDown _numInterval = new() { Minimum = AppSettings.MinIntervalHours, Maximum = AppSettings.MaxIntervalHours, Width = 70, Anchor = AnchorStyles.Left };
-    private readonly Label _lblEffective = new() { AutoSize = true, Anchor = AnchorStyles.Left };
-    private readonly Label _lblLanguage = new() { AutoSize = true, Anchor = AnchorStyles.Left };
-    private readonly ComboBox _cmbLanguage = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 110, Anchor = AnchorStyles.Left };
+    // ---------------- activity
+    private readonly FlatButton _btnToggleLog = new() { Kind = ButtonKind.Ghost, IconOnly = true };
+    private readonly FlatButton _btnOpenLog = new() { Kind = ButtonKind.Ghost, IconGlyph = Theme.IcoDocument, AutoSize = true };
+    private readonly ThemedLabel _lblLastLine = new() { AutoSize = false, Dock = DockStyle.Fill, Secondary = true, Font = Theme.MonoSmall, TextAlign = ContentAlignment.MiddleLeft, AutoEllipsis = true };
+    private readonly ThemedPanel _consoleHost = new() { Dock = DockStyle.Fill, BackRole = ThemedPanel.Role.Console };
+    private readonly ConsoleBox _console = new() { Dock = DockStyle.Fill };
 
-    private readonly Label _lblRepoInput = new() { AutoSize = true, Anchor = AnchorStyles.Left };
-    private readonly TextBox _txtRepo = new() { Anchor = AnchorStyles.Left | AnchorStyles.Right };
-    private readonly Button _btnAdd = new() { AutoSize = true };
-    private readonly Button _btnShowList = new() { AutoSize = true };
-    private readonly Button _btnCheckNow = new() { AutoSize = true };
-    private readonly Button _btnOpenLog = new() { AutoSize = true };
+    // ---------------- settings panel
+    private readonly ThemedLabel _lblSettingsTitle = new() { Font = Theme.Title };
+    private readonly FlatButton _btnCloseSettings = new() { Kind = ButtonKind.Ghost, IconOnly = true, Vector = VectorIcon.Close };
+    private readonly SettingsFlow _settingsFlow = new();
+    private readonly CaptionLabel _capTheme = new();
+    private readonly SegmentedControl _segTheme = new();
+    private readonly CaptionLabel _capLanguage = new();
+    private readonly SegmentedControl _segLanguage = new() { Items = new[] { "English", "Deutsch" } };
+    private readonly CaptionLabel _capFolder = new();
+    private readonly InputBox _txtFolder = new() { Mono = true };
+    private readonly FlatButton _btnBrowse = new() { Kind = ButtonKind.Secondary, IconGlyph = Theme.IcoFolder, AutoSize = true };
+    private readonly FlatButton _btnOpenFolder = new() { Kind = ButtonKind.Ghost, IconGlyph = Theme.IcoOpen, AutoSize = true };
+    private readonly NoticeLine _folderNotice = new() { AutoHide = true, Visible = false };
+    private readonly CaptionLabel _capInterval = new();
+    private readonly Stepper _numInterval = new() { Minimum = AppSettings.MinIntervalHours, Maximum = AppSettings.MaxIntervalHours, Unit = "h" };
+    private readonly ThemedLabel _lblEffective = new() { Secondary = true, Font = Theme.UiSmall };
+    private readonly CaptionLabel _capToken = new();
+    private readonly NoticeLine _tokenState = new();
+    private readonly InputBox _txtToken = new() { Mono = true };
+    private readonly FlatButton _btnSaveToken = new() { Kind = ButtonKind.Secondary, IconGlyph = Theme.IcoSave, AutoSize = true };
+    private readonly FlatButton _btnRemoveToken = new() { Kind = ButtonKind.Ghost, IconGlyph = Theme.IcoDelete, AutoSize = true };
+    private readonly NoticeLine _tokenResult = new() { AutoHide = true, Visible = false };
+    private readonly ThemedLabel _lblTokenHint = new() { Secondary = true, Font = Theme.UiSmall };
+    private readonly ThemedLabel _lblTrayHint = new() { Secondary = true, Font = Theme.UiSmall };
 
-    private readonly Label _lblStatusLine = new() { Dock = DockStyle.Top, AutoSize = false, Height = 24, TextAlign = ContentAlignment.MiddleLeft };
-    private readonly SplitContainer _split = new() { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal };
-    private readonly ListView _lv = new() { Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true, GridLines = true, HideSelection = false, MultiSelect = false };
-    private readonly Label _lblDetails = new() { Dock = DockStyle.Top, AutoSize = false, Height = 20, TextAlign = ContentAlignment.BottomLeft };
-    private readonly TextBox _txtDetails = new() { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Both, WordWrap = false, Font = new Font(FontFamily.GenericMonospace, 9f), BackColor = SystemColors.Window };
-
+    // ---------------- tray
     private readonly NotifyIcon _tray = new();
     private readonly ContextMenuStrip _trayMenu = new();
     private readonly ToolStripMenuItem _miState = new() { Enabled = false };
@@ -69,6 +96,7 @@ public sealed class MainForm : Form
     {
         _settings = AppSettings.Load();
         Lang.Current = _settings.Language;
+        Theme.SetMode(Theme.ParseMode(_settings.Theme));
 
         Logger.Cleanup();
         _lastLogCleanup = DateTime.Now;
@@ -76,25 +104,32 @@ public sealed class MainForm : Form
 
         Icon appIcon = LoadAppIcon();
         Icon = appIcon;
-        Size = new Size(1100, 760);
-        MinimumSize = new Size(820, 560);
+        AutoScaleMode = AutoScaleMode.None; // all sizes are scaled explicitly via Ui.S()
+        Font = Theme.Ui;
+        BackColor = Theme.Current.Bg;       // before the handle exists: no white flash
+        Size = new Size(Ui.S(1180), Ui.S(800));
+        MinimumSize = new Size(Ui.S(900), Ui.S(620));
         StartPosition = FormStartPosition.CenterScreen;
+        KeyPreview = true;
 
         BuildUi();
         BuildTray(appIcon);
 
         _loadingUi = true;
         _txtFolder.Text = _settings.DownloadFolder;
-        _numInterval.Value = Math.Clamp(_settings.CheckIntervalHours, AppSettings.MinIntervalHours, AppSettings.MaxIntervalHours);
-        _cmbLanguage.Items.AddRange(new object[] { "English", "Deutsch" });
-        _cmbLanguage.SelectedIndex = _settings.Language == "de" ? 1 : 0;
+        _numInterval.SetSilently(Math.Clamp(_settings.CheckIntervalHours, AppSettings.MinIntervalHours, AppSettings.MaxIntervalHours));
+        _segLanguage.SelectedIndex = _settings.Language == "de" ? 1 : 0;
+        _segTheme.SelectedIndex = Theme.Mode switch { ThemeMode.Light => 1, ThemeMode.Dark => 2, _ => 0 };
         _loadingUi = false;
 
         foreach (var r in _settings.Repositories) _status[r] = new RepoStatus { Repo = r };
 
         ApplyLanguage();
+        SetLogExpanded(_settings.LogExpanded);
+        ApplyThemeColors(); // controls were created as field initializers before the palette was resolved
 
         string ver = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.0.0";
+        _header.Version = ver;
         Logger.Info(Lang.F("log_start", ver));
         if (AppSettings.LoadError != null) Logger.Warn(Lang.F("log_settings_load_failed", AppSettings.LoadError));
 
@@ -103,9 +138,18 @@ public sealed class MainForm : Form
         _nextCheckUtc = due <= DateTime.UtcNow.AddSeconds(10) ? DateTime.UtcNow.AddSeconds(10) : due;
         Logger.Info(Lang.F("log_next", _nextCheckUtc.ToLocalTime().ToString("g")));
 
+        Theme.Changed += OnThemeChanged;
         _timer.Tick += OnTimerTick;
         _timer.Start();
-        UpdateStatusLine();
+        _noticeTimer.Tick += (_, _) => { _noticeTimer.Stop(); _repoNotice.Clear(); };
+        UpdateStatusDisplay();
+
+        // first start: no folder yet -> show settings right away
+        if (string.IsNullOrWhiteSpace(_settings.DownloadFolder))
+        {
+            SetSettingsVisible(true);
+            _folderNotice.Show(Lang.Get("msg_no_folder"), Tone.Warn);
+        }
     }
 
     // =====================================================================
@@ -124,97 +168,247 @@ public sealed class MainForm : Form
 
     private void BuildUi()
     {
-        // ---- settings group
-        var tlS = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 4 };
-        tlS.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        tlS.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        tlS.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        tlS.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        // ---- header: title (painted) + actions on the right
+        var headerActions = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Right, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, WrapContents = false,
+            BackColor = Color.Transparent, Padding = new Padding(0, Ui.S(13), 0, 0), Margin = Padding.Empty
+        };
+        _btnSettings.Margin = new Padding(0, 0, Ui.S(8), 0);
+        _btnCheckNow.Margin = Padding.Empty;
+        headerActions.Controls.Add(_btnSettings);
+        headerActions.Controls.Add(_btnCheckNow);
+        _header.Controls.Add(headerActions);
 
-        tlS.Controls.Add(_lblFolder, 0, 0);
-        tlS.Controls.Add(_txtFolder, 1, 0);
-        tlS.Controls.Add(_btnBrowse, 2, 0);
-        tlS.Controls.Add(_btnOpenFolder, 3, 0);
+        // ---- tiles
+        _tiles.Controls.Add(_tileState);
+        _tiles.Controls.Add(_tileNext);
+        _tiles.Controls.Add(_tileReach);
+        _tiles.Controls.Add(_tileApi);
 
-        tlS.Controls.Add(_lblToken, 0, 1);
-        tlS.Controls.Add(_txtToken, 1, 1);
-        tlS.Controls.Add(_btnSaveToken, 2, 1);
-        tlS.Controls.Add(_btnRemoveToken, 3, 1);
+        // ---- repository card
+        var inputRow = new ThemedPanel { Dock = DockStyle.Top, Height = Ui.S(34), BackRole = ThemedPanel.Role.Surface };
+        var gap = new Panel { Dock = DockStyle.Right, Width = Ui.S(8), BackColor = Color.Transparent };
+        inputRow.Controls.Add(_txtRepo);
+        inputRow.Controls.Add(gap);
+        inputRow.Controls.Add(_btnAdd);
+        _repoNotice.Height = Ui.S(30);
 
-        tlS.Controls.Add(new Label { AutoSize = true }, 0, 2);
-        tlS.Controls.Add(_lblTokenState, 1, 2);
-        tlS.SetColumnSpan(_lblTokenState, 3);
+        _grid.Columns.Add(MakeColumn("repo", 30, Ui.S(140), Theme.Ui));
+        _grid.Columns.Add(MakeColumn("status", 19, Ui.S(120), Theme.Ui));
+        _grid.Columns.Add(MakeColumn("release", 14, Ui.S(80), Theme.Mono));
+        _grid.Columns.Add(MakeColumn("pre", 15, Ui.S(80), Theme.Mono));
+        _grid.Columns.Add(MakeColumn("last", 12, Ui.S(80), Theme.Mono));
+        _grid.Columns.Add(MakeColumn("details", 26, Ui.S(80), Theme.Ui));
+        _grid.Columns["details"]!.DefaultCellStyle.ForeColor = Theme.Current.TextSecondary;
+        _grid.ContextMenuStrip = _gridMenu;
+        _gridMenu.Items.Add(_miRemove);
+        _gridMenu.Renderer = new ThemedMenuRenderer();
+        _gridMenu.ShowImageMargin = false;
+        _gridMenu.Opening += (_, e) => { _miRemove.Enabled = _grid.SelectedRows.Count > 0; if (!_miRemove.Enabled) e.Cancel = true; };
+        _miRemove.Click += (_, _) => RemoveSelected();
 
-        var flInterval = new FlowLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Dock = DockStyle.Fill, WrapContents = false, Margin = new Padding(0) };
-        flInterval.Controls.Add(_numInterval);
-        _lblEffective.Margin = new Padding(10, 6, 20, 0);
-        flInterval.Controls.Add(_lblEffective);
-        _lblLanguage.Margin = new Padding(10, 6, 3, 0);
-        flInterval.Controls.Add(_lblLanguage);
-        flInterval.Controls.Add(_cmbLanguage);
+        _repoCard.Controls.Add(_grid);
+        _repoCard.Controls.Add(_repoNotice);
+        _repoCard.Controls.Add(inputRow);
 
-        tlS.Controls.Add(_lblInterval, 0, 3);
-        tlS.Controls.Add(flInterval, 1, 3);
-        tlS.SetColumnSpan(flInterval, 3);
-        _grpSettings.Controls.Add(tlS);
+        // ---- activity card (collapsible)
+        _consoleHost.Padding = new Padding(Ui.S(10), Ui.S(8), Ui.S(4), Ui.S(8));
+        _consoleHost.Controls.Add(_console);
+        _activityCard.Controls.Add(_consoleHost);
+        _activityCard.Controls.Add(_lblLastLine);
+        _activityCard.Controls.Add(_btnToggleLog);
+        _activityCard.Controls.Add(_btnOpenLog);
+        _btnToggleLog.Height = Ui.S(28);
+        _btnOpenLog.Height = Ui.S(28);
+        _activityCard.Resize += (_, _) => LayoutActivityButtons();
+        _body.Resize += (_, _) =>
+        {
+            if (_settings.LogExpanded && _activityCard.Height != ExpandedLogHeight()) _activityCard.Height = ExpandedLogHeight();
+        };
 
-        // ---- repos group
-        var tlR = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 2 };
-        tlR.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        tlR.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        tlR.Controls.Add(_lblRepoInput, 0, 0);
-        tlR.SetColumnSpan(_lblRepoInput, 2);
-        tlR.Controls.Add(_txtRepo, 0, 1);
-        tlR.Controls.Add(_btnAdd, 1, 1);
-        var flBtns = new FlowLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Dock = DockStyle.Fill, WrapContents = true, Margin = new Padding(0) };
-        flBtns.Controls.Add(_btnShowList);
-        flBtns.Controls.Add(_btnCheckNow);
-        flBtns.Controls.Add(_btnOpenLog);
-        tlR.Controls.Add(flBtns, 0, 2);
-        tlR.SetColumnSpan(flBtns, 2);
-        _grpRepos.Controls.Add(tlR);
+        // ---- body: tiles / repo card / activity card
+        _body.Padding = new Padding(Ui.S(16), Ui.S(16), Ui.S(16), Ui.S(16));
+        var gapTop = new Panel { Dock = DockStyle.Top, Height = Ui.S(12), BackColor = Color.Transparent };
+        var gapBottom = new Panel { Dock = DockStyle.Bottom, Height = Ui.S(12), BackColor = Color.Transparent };
+        // docking order: Fill first, last added = outermost
+        _body.Controls.Add(_repoCard);
+        _body.Controls.Add(gapBottom);
+        _body.Controls.Add(_activityCard);
+        _body.Controls.Add(gapTop);
+        _body.Controls.Add(_tiles);
 
-        // ---- status group
-        _lv.Columns.Add("", 230);
-        _lv.Columns.Add("", 170);
-        _lv.Columns.Add("", 140);
-        _lv.Columns.Add("", 140);
-        _lv.Columns.Add("", 130);
-        _lv.Columns.Add("", 300);
-        _split.Panel1.Controls.Add(_lv);
-        _split.Panel2.Controls.Add(_txtDetails);
-        _split.Panel2.Controls.Add(_lblDetails);
-        _grpStatus.Controls.Add(_split);
-        _grpStatus.Controls.Add(_lblStatusLine);
+        BuildSettingsPanel();
 
-        // order matters for docking: Fill first, then Top controls (last added = top-most)
-        Controls.Add(_grpStatus);
-        Controls.Add(_grpRepos);
-        Controls.Add(_grpSettings);
+        Controls.Add(_body);
+        Controls.Add(_header);
+        Controls.Add(_settingsPanel); // overlay, positioned in LayoutSettingsPanel
+        _settingsPanel.BringToFront();
 
         // ---- events
+        _btnSettings.Click += (_, _) => SetSettingsVisible(!_settingsPanel.Visible);
+        _btnCloseSettings.Click += (_, _) => SetSettingsVisible(false);
         _btnBrowse.Click += (_, _) => BrowseFolder();
         _btnOpenFolder.Click += (_, _) => OpenFolder();
         _btnSaveToken.Click += async (_, _) => await SaveTokenAsync();
         _btnRemoveToken.Click += (_, _) => RemoveToken();
+        _txtToken.Box.KeyDown += async (_, e) =>
+        {
+            if (e.KeyCode == Keys.Enter) { e.SuppressKeyPress = true; await SaveTokenAsync(); }
+        };
         _numInterval.ValueChanged += (_, _) => OnIntervalChanged();
-        _cmbLanguage.SelectedIndexChanged += (_, _) => OnLanguageChanged();
+        _segLanguage.SelectedIndexChanged += (_, _) => OnLanguageChanged();
+        _segTheme.SelectedIndexChanged += (_, _) => OnThemeModeChanged();
         _btnAdd.Click += (_, _) => AddRepositories();
-        _txtRepo.KeyDown += (_, e) =>
+        _txtRepo.Box.KeyDown += (_, e) =>
         {
             if (e.KeyCode == Keys.Enter) { e.SuppressKeyPress = true; AddRepositories(); }
         };
-        _btnShowList.Click += (_, _) => ShowRepoList();
         _btnCheckNow.Click += async (_, _) => await ManualCheckAsync();
         _btnOpenLog.Click += (_, _) => OpenLog();
+        _btnToggleLog.Click += (_, _) => SetLogExpanded(!_settings.LogExpanded, save: true);
+        _grid.KeyDown += (_, e) =>
+        {
+            if (e.KeyCode == Keys.Delete) { e.Handled = true; RemoveSelected(); }
+        };
+        _grid.CellMouseDown += (_, e) =>
+        {
+            // right click selects the row under the mouse (if not already part of the selection)
+            if (e.Button == MouseButtons.Right && e.RowIndex >= 0 && !_grid.Rows[e.RowIndex].Selected)
+            {
+                _grid.ClearSelection();
+                _grid.Rows[e.RowIndex].Selected = true;
+            }
+        };
 
         Resize += OnFormResize;
+        Layout += (_, _) => LayoutSettingsPanel();
         FormClosing += OnFormClosing;
         Shown += (_, _) =>
         {
-            try { _split.SplitterDistance = Math.Max(100, _split.Height / 2); } catch { /* ignore */ }
             LoadLogTail();
+            _grid.ClearSelection();
+            _txtRepo.Focus();
         };
+    }
+
+    private static DataGridViewTextBoxColumn MakeColumn(string name, float weight, int minWidth, Font font)
+    {
+        var c = new DataGridViewTextBoxColumn
+        {
+            Name = name,
+            FillWeight = weight,
+            MinimumWidth = minWidth,
+            SortMode = DataGridViewColumnSortMode.Automatic,
+        };
+        c.DefaultCellStyle.Font = font;
+        return c;
+    }
+
+    private void BuildSettingsPanel()
+    {
+        _settingsPanel.Paint += (_, e) =>
+        {
+            using var p = new Pen(Theme.Current.Line);
+            e.Graphics.DrawLine(p, 0, 0, 0, _settingsPanel.Height);
+        };
+
+        var head = new ThemedPanel { Dock = DockStyle.Top, Height = Ui.S(60), BackRole = ThemedPanel.Role.Surface, Padding = new Padding(Ui.S(24), Ui.S(14), Ui.S(14), 0) };
+        _lblSettingsTitle.Dock = DockStyle.Left;
+        _lblSettingsTitle.AutoSize = false;
+        _lblSettingsTitle.Width = Ui.S(260);
+        _lblSettingsTitle.TextAlign = ContentAlignment.MiddleLeft;
+        _btnCloseSettings.Dock = DockStyle.Right;
+        _btnCloseSettings.Width = Ui.S(34);
+        head.Controls.Add(_lblSettingsTitle);
+        head.Controls.Add(_btnCloseSettings);
+        head.Paint += (_, e) =>
+        {
+            using var p = new Pen(Theme.Current.Line);
+            e.Graphics.DrawLine(p, Ui.S(24), head.Height - 1, head.Width - Ui.S(14), head.Height - 1);
+        };
+
+        _settingsFlow.Dock = DockStyle.Fill;
+        _settingsFlow.Padding = new Padding(Ui.S(24), Ui.S(4), Ui.S(20), Ui.S(24));
+
+        var folderButtons = Row(_btnBrowse, _btnOpenFolder);
+        var tokenButtons = Row(_btnSaveToken, _btnRemoveToken);
+        _txtToken.Box.UseSystemPasswordChar = true;
+        _txtFolder.Box.ReadOnly = true;
+        _txtFolder.ApplyTheme();
+        _lblEffective.AutoSize = true;
+        _lblTokenHint.AutoSize = true;
+        _lblTrayHint.AutoSize = true;
+
+        _settingsFlow.AddSection(_capTheme, _segTheme);
+        _settingsFlow.AddSection(_capLanguage, _segLanguage);
+        _settingsFlow.AddSection(_capFolder, _txtFolder, folderButtons, _folderNotice);
+        _settingsFlow.AddSection(_capInterval, _numInterval, _lblEffective);
+        _settingsFlow.AddSection(_capToken, _tokenState, _txtToken, tokenButtons, _tokenResult, _lblTokenHint);
+        _settingsFlow.AddFooter(_lblTrayHint);
+
+        _settingsPanel.Controls.Add(_settingsFlow);
+        _settingsPanel.Controls.Add(head);
+    }
+
+    private static FlowLayoutPanel Row(params Control[] controls)
+    {
+        var f = new FlowLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, WrapContents = false, BackColor = Color.Transparent, Margin = Padding.Empty };
+        for (int i = 0; i < controls.Length; i++)
+        {
+            controls[i].Margin = new Padding(0, 0, i < controls.Length - 1 ? Ui.S(8) : 0, 0);
+            f.Controls.Add(controls[i]);
+        }
+        return f;
+    }
+
+    private void LayoutActivityButtons()
+    {
+        int h = _btnToggleLog.Height;
+        int y = (CardPanel.CaptionHeight - h) / 2;
+        int right = _activityCard.Width - Ui.S(10);
+        _btnToggleLog.SetBounds(right - h, y, h, h);
+        _btnOpenLog.Size = _btnOpenLog.GetPreferredSize(Size.Empty);
+        _btnOpenLog.Location = new Point(_btnToggleLog.Left - Ui.S(6) - _btnOpenLog.Width, y);
+        _btnToggleLog.BringToFront();
+        _btnOpenLog.BringToFront();
+    }
+
+    private void SetLogExpanded(bool expanded, bool save = false)
+    {
+        if (save && _settings.LogExpanded != expanded)
+        {
+            _settings.LogExpanded = expanded;
+            _settings.Save();
+        }
+        _consoleHost.Visible = expanded;
+        _lblLastLine.Visible = !expanded;
+        _activityCard.Height = expanded ? ExpandedLogHeight() : CardPanel.CaptionHeight + Ui.S(40);
+        _activityCard.Padding = new Padding(Ui.S(16), CardPanel.CaptionHeight + Ui.S(4), Ui.S(16), Ui.S(expanded ? 12 : 8));
+        _btnToggleLog.Vector = expanded ? VectorIcon.ChevronDown : VectorIcon.ChevronUp;
+        _btnToggleLog.Text = Lang.Get(expanded ? "btn_hide_log" : "btn_show_log");
+        _btnToggleLog.Invalidate();
+        if (expanded) _console.ScrollToEnd();
+        LayoutActivityButtons();
+    }
+
+    private void LayoutSettingsPanel()
+    {
+        int w = Math.Min(Ui.S(380), ClientSize.Width - Ui.S(200));
+        _settingsPanel.SetBounds(ClientSize.Width - w, _header.Bottom, w, Math.Max(0, ClientSize.Height - _header.Bottom));
+    }
+
+    /// <summary>Expanded log takes about a third of the body, so the repository table always keeps most of the space.</summary>
+    private int ExpandedLogHeight() =>
+        Math.Clamp((int)(_body.ClientSize.Height * 0.32), Ui.S(150), Ui.S(260));
+
+    private void SetSettingsVisible(bool visible)
+    {
+        LayoutSettingsPanel();
+        _settingsPanel.Visible = visible;
+        if (visible) _settingsPanel.BringToFront();
+        _btnSettings.Kind = visible ? ButtonKind.Secondary : ButtonKind.Ghost;
+        if (visible) _segTheme.Focus();
     }
 
     private void BuildTray(Icon icon)
@@ -229,6 +423,8 @@ public sealed class MainForm : Form
         _trayMenu.Items.Add(_miCheck);
         _trayMenu.Items.Add(new ToolStripSeparator());
         _trayMenu.Items.Add(_miExit);
+        _trayMenu.Renderer = new ThemedMenuRenderer();
+        _trayMenu.ShowImageMargin = false;
         _trayMenu.Opening += (_, _) => UpdateTrayMenu();
 
         _miOpen.Click += (_, _) => RestoreFromTray();
@@ -248,32 +444,45 @@ public sealed class MainForm : Form
     private void ApplyLanguage()
     {
         Text = Lang.Get("app_title");
-        _grpSettings.Text = Lang.Get("grp_settings");
-        _grpRepos.Text = Lang.Get("grp_repos");
-        _grpStatus.Text = Lang.Get("grp_status");
-        _lblDetails.Text = Lang.Get("grp_details");
+        _header.TitleText = Lang.Get("app_title");
+        _header.Invalidate();
+        _btnSettings.Text = Lang.Get("btn_settings");
+        _btnCheckNow.Text = Lang.Get("btn_check_now");
 
-        _lblFolder.Text = Lang.Get("lbl_folder");
+        _repoCard.Title = Lang.Get("grp_repos");
+        _activityCard.Title = Lang.Get("grp_activity");
+        _txtRepo.Box.Placeholder = Lang.Get("repo_placeholder");
+        _btnAdd.Text = Lang.Get("btn_add");
+        _btnOpenLog.Text = Lang.Get("btn_open_log");
+        _btnToggleLog.Text = Lang.Get(_settings.LogExpanded ? "btn_hide_log" : "btn_show_log");
+        _miRemove.Text = Lang.Get("btn_remove");
+        _grid.EmptyText = Lang.Get("grid_empty");
+
+        _grid.Columns["repo"]!.HeaderText = Lang.Get("col_repo");
+        _grid.Columns["status"]!.HeaderText = Lang.Get("col_status");
+        _grid.Columns["release"]!.HeaderText = Lang.Get("col_release");
+        _grid.Columns["pre"]!.HeaderText = Lang.Get("col_prerelease");
+        _grid.Columns["last"]!.HeaderText = Lang.Get("col_lastcheck");
+        _grid.Columns["details"]!.HeaderText = Lang.Get("col_details");
+
+        _lblSettingsTitle.Text = Lang.Get("grp_settings");
+        _btnCloseSettings.Text = Lang.Get("btn_close");
+        _capTheme.Text = Lang.Get("sec_theme");
+        _segTheme.Items = new[] { Lang.Get("theme_system"), Lang.Get("theme_light"), Lang.Get("theme_dark") };
+        _capLanguage.Text = Lang.Get("sec_language");
+        _capFolder.Text = Lang.Get("sec_folder");
+        _txtFolder.Box.Placeholder = Lang.Get("folder_placeholder");
         _btnBrowse.Text = Lang.Get("btn_browse");
         _btnOpenFolder.Text = Lang.Get("btn_open_folder");
-        _lblToken.Text = Lang.Get("lbl_token");
+        _capInterval.Text = Lang.Get("sec_interval");
+        _capToken.Text = Lang.Get("sec_token");
+        _txtToken.Box.Placeholder = Lang.Get("token_placeholder");
         _btnSaveToken.Text = Lang.Get("btn_save_token");
         _btnRemoveToken.Text = Lang.Get("btn_remove_token");
-        _lblInterval.Text = Lang.Get("lbl_interval");
-        _lblLanguage.Text = Lang.Get("lbl_language");
-
-        _lblRepoInput.Text = Lang.Get("lbl_repo_input");
-        _btnAdd.Text = Lang.Get("btn_add");
-        _btnShowList.Text = Lang.Get("btn_show_list");
-        _btnCheckNow.Text = Lang.Get("btn_check_now");
-        _btnOpenLog.Text = Lang.Get("btn_open_log");
-
-        _lv.Columns[0].Text = Lang.Get("col_repo");
-        _lv.Columns[1].Text = Lang.Get("col_status");
-        _lv.Columns[2].Text = Lang.Get("col_release");
-        _lv.Columns[3].Text = Lang.Get("col_prerelease");
-        _lv.Columns[4].Text = Lang.Get("col_lastcheck");
-        _lv.Columns[5].Text = Lang.Get("col_details");
+        _lblTokenHint.Text = Lang.Get("token_hint");
+        _lblTrayHint.Text = Lang.Get("tray_balloon");
+        _tokenResult.Clear();
+        if (!string.IsNullOrWhiteSpace(_settings.DownloadFolder)) _folderNotice.Clear();
 
         _miOpen.Text = Lang.Get("tray_open");
         _miCheck.Text = Lang.Get("tray_check");
@@ -282,7 +491,68 @@ public sealed class MainForm : Form
         UpdateTokenState();
         UpdateEffectiveInterval();
         RefreshRepoList();
-        UpdateStatusLine();
+        UpdateStatusDisplay();
+        _settingsFlow.PerformLayout();
+        LayoutActivityButtons();
+    }
+
+    // =====================================================================
+    // Theme
+    // =====================================================================
+    private void OnThemeModeChanged()
+    {
+        if (_loadingUi) return;
+        var mode = _segTheme.SelectedIndex switch { 1 => ThemeMode.Light, 2 => ThemeMode.Dark, _ => ThemeMode.System };
+        _settings.Theme = Theme.ModeToString(mode);
+        _settings.Save();
+        Theme.SetMode(mode);
+    }
+
+    private void OnThemeChanged()
+    {
+        if (IsDisposed) return;
+        Theme.WithoutRedraw(this, ApplyThemeColors);
+        Theme.ApplyTitleBar(this);
+        Theme.ApplyScrollbars(_console);
+        _trayMenu.Invalidate();
+        _gridMenu.Invalidate();
+    }
+
+    private void ApplyThemeColors()
+    {
+        BackColor = Theme.Current.Bg;
+        Ui.ApplyThemeTree(this);
+        _grid.Columns["details"]!.DefaultCellStyle.ForeColor = Theme.Current.TextSecondary;
+        _console.Rerender();
+        UpdateTokenState();
+        UpdateEffectiveInterval();
+    }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        Theme.ApplyTitleBar(this);
+        Theme.ApplyScrollbars(_console);
+    }
+
+    protected override void WndProc(ref Message m)
+    {
+        const int WM_SETTINGCHANGE = 0x001A;
+        const int SPI_SETHIGHCONTRAST = 0x0043;
+        if (m.Msg == WM_SETTINGCHANGE)
+        {
+            string? area = m.LParam != IntPtr.Zero ? Marshal.PtrToStringUni(m.LParam) : null;
+            if (area == "ImmersiveColorSet" || (int)m.WParam == SPI_SETHIGHCONTRAST)
+                BeginInvoke(new Action(Theme.Refresh));
+        }
+        base.WndProc(ref m);
+    }
+
+    protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+    {
+        if (keyData == Keys.F5) { _ = ManualCheckAsync(); return true; }
+        if (keyData == Keys.Escape && _settingsPanel.Visible) { SetSettingsVisible(false); return true; }
+        return base.ProcessCmdKey(ref msg, keyData);
     }
 
     // =====================================================================
@@ -290,13 +560,14 @@ public sealed class MainForm : Form
     // =====================================================================
     private void BrowseFolder()
     {
-        using var dlg = new FolderBrowserDialog { ShowNewFolderButton = true, UseDescriptionForTitle = true, Description = Lang.Get("lbl_folder") };
+        using var dlg = new FolderBrowserDialog { ShowNewFolderButton = true, UseDescriptionForTitle = true, Description = Lang.Get("sec_folder") };
         if (Directory.Exists(_settings.DownloadFolder)) dlg.SelectedPath = _settings.DownloadFolder;
         if (dlg.ShowDialog(this) != DialogResult.OK) return;
 
         _settings.DownloadFolder = dlg.SelectedPath;
         _settings.Save();
         _txtFolder.Text = dlg.SelectedPath;
+        _folderNotice.Clear();
         Logger.Info(Lang.F("log_folder_set", dlg.SelectedPath));
     }
 
@@ -304,7 +575,7 @@ public sealed class MainForm : Form
     {
         if (!Directory.Exists(_settings.DownloadFolder))
         {
-            MessageBox.Show(this, Lang.Get("msg_no_folder"), Text, MessageBoxButtons.OK, MessageBoxIcon.Information);
+            _folderNotice.Show(Lang.Get("msg_no_folder"), Tone.Warn);
             return;
         }
         try { Process.Start(new ProcessStartInfo(_settings.DownloadFolder) { UseShellExecute = true }); }
@@ -323,15 +594,16 @@ public sealed class MainForm : Form
         catch (Exception ex)
         {
             Logger.Error(ex.Message);
-            MessageBox.Show(this, ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
+            _tokenResult.Show(ex.Message, Tone.Error);
             return;
         }
         _settings.Save();
-        _txtToken.Clear();
+        _txtToken.Text = "";
         UpdateTokenState();
         UpdateEffectiveInterval();
 
         _btnSaveToken.Enabled = false;
+        _tokenResult.Show(Lang.Get("token_validating"), Tone.Muted);
         try
         {
             var (ok, limit, error) = await _checker.ValidateTokenAsync(token, _cts.Token);
@@ -340,19 +612,19 @@ public sealed class MainForm : Form
             {
                 msg = Lang.F("msg_token_check_ok", limit?.ToString() ?? Lang.Get("unknown"));
                 Logger.Info(msg);
-                MessageBox.Show(this, msg, Text, MessageBoxButtons.OK, MessageBoxIcon.Information);
+                _tokenResult.Show(msg, Tone.Ok);
             }
             else
             {
                 msg = error.StartsWith("HTTP") ? Lang.F("msg_token_check_fail", error) : Lang.F("msg_token_check_unknown", error);
                 Logger.Warn(msg);
-                MessageBox.Show(this, msg, Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                _tokenResult.Show(msg, Tone.Warn);
             }
         }
         finally
         {
             _btnSaveToken.Enabled = true;
-            UpdateStatusLine();
+            UpdateStatusDisplay();
         }
     }
 
@@ -364,19 +636,21 @@ public sealed class MainForm : Form
         UpdateTokenState();
         UpdateEffectiveInterval();
         Logger.Info(Lang.Get("msg_token_removed"));
+        _tokenResult.Show(Lang.Get("msg_token_removed"), Tone.Muted);
+        UpdateStatusDisplay();
     }
 
     private void UpdateTokenState()
     {
         bool has = _settings.HasToken;
-        _lblTokenState.Text = Lang.Get(has ? "token_set" : "token_not_set");
-        _lblTokenState.ForeColor = has ? Color.DarkGreen : Color.DarkOrange;
+        _tokenState.Show(Lang.Get(has ? "token_set" : "token_not_set"), has ? Tone.Ok : Tone.Warn);
+        _btnRemoveToken.Enabled = has;
     }
 
     private void OnIntervalChanged()
     {
         if (_loadingUi) return;
-        _settings.CheckIntervalHours = (int)_numInterval.Value;
+        _settings.CheckIntervalHours = _numInterval.Value;
         _settings.Save();
         Logger.Info(Lang.F("log_interval_set", _settings.CheckIntervalHours));
         UpdateEffectiveInterval();
@@ -386,7 +660,7 @@ public sealed class MainForm : Form
     private void OnLanguageChanged()
     {
         if (_loadingUi) return;
-        _settings.Language = _cmbLanguage.SelectedIndex == 1 ? "de" : "en";
+        _settings.Language = _segLanguage.SelectedIndex == 1 ? "de" : "en";
         Lang.Current = _settings.Language;
         _settings.Save();
         ApplyLanguage();
@@ -413,13 +687,14 @@ public sealed class MainForm : Form
         if (eff > _settings.CheckIntervalHours)
         {
             _lblEffective.Text = Lang.F("interval_adjusted", eff, _settings.Repositories.Count);
-            _lblEffective.ForeColor = Color.DarkOrange;
+            _lblEffective.Tone = Tone.Warn;
         }
         else
         {
             _lblEffective.Text = Lang.F("interval_ok", eff);
-            _lblEffective.ForeColor = SystemColors.ControlText;
+            _lblEffective.Tone = Tone.Neutral;
         }
+        _settingsFlow.PerformLayout();
     }
 
     private void RecalculateNextCheck()
@@ -431,12 +706,19 @@ public sealed class MainForm : Form
         if (_rateLimitUntilUtc.HasValue && next < _rateLimitUntilUtc.Value) next = _rateLimitUntilUtc.Value;
         _nextCheckUtc = next;
         Logger.Info(Lang.F("log_next", _nextCheckUtc.ToLocalTime().ToString("g")));
-        UpdateStatusLine();
+        UpdateStatusDisplay();
     }
 
     // =====================================================================
     // Repositories
     // =====================================================================
+    private void ShowNotice(string text, Tone tone)
+    {
+        _repoNotice.Show(text, tone);
+        _noticeTimer.Stop();
+        _noticeTimer.Start();
+    }
+
     private void AddRepositories()
     {
         var entries = RepoParser.SplitInput(_txtRepo.Text).ToList();
@@ -468,21 +750,26 @@ public sealed class MainForm : Form
             _settings.Save();
             RefreshRepoList();
             UpdateEffectiveInterval();
-            UpdateStatusLine();
+            UpdateStatusDisplay();
         }
 
         _txtRepo.Text = problems.Count > 0 && added == 0 ? _txtRepo.Text : "";
         if (problems.Count > 0)
-            MessageBox.Show(this, string.Join(Environment.NewLine, problems), Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        {
+            string text = added > 0 ? Lang.F("msg_added", added) + "  ·  " + string.Join("  ·  ", problems) : string.Join("  ·  ", problems);
+            ShowNotice(text, Tone.Warn);
+        }
+        else if (added > 0) ShowNotice(Lang.F("msg_added", added), Tone.Ok);
     }
 
-    private void ShowRepoList()
+    private void RemoveSelected()
     {
-        using var f = new RepoListForm(_settings.Repositories, _status, Icon);
-        f.ShowDialog(this);
-        if (f.RemovedRepos.Count == 0) return;
+        var names = _grid.SelectedRows.Cast<DataGridViewRow>().Select(r => r.Cells["repo"].Value?.ToString() ?? "").Where(n => n.Length > 0).ToList();
+        if (names.Count == 0) return;
+        if (!ThemedDialog.Confirm(this, Lang.Get("app_title"), Lang.F("confirm_remove", names.Count), Lang.Get("btn_remove_confirm"), Lang.Get("btn_cancel")))
+            return;
 
-        foreach (var r in f.RemovedRepos)
+        foreach (var r in names)
         {
             _settings.Repositories.RemoveAll(x => string.Equals(x, r, StringComparison.OrdinalIgnoreCase));
             _status.Remove(r);
@@ -491,7 +778,8 @@ public sealed class MainForm : Form
         _settings.Save();
         RefreshRepoList();
         UpdateEffectiveInterval();
-        UpdateStatusLine();
+        UpdateStatusDisplay();
+        ShowNotice(Lang.F("msg_removed", names.Count), Tone.Muted);
     }
 
     public static string StateText(RepoState s) => s switch
@@ -505,21 +793,29 @@ public sealed class MainForm : Form
         _ => s.ToString()
     };
 
-    public static Color StateColor(RepoState s) => s switch
+    private static void FillRow(DataGridViewRow row, RepoStatus st)
     {
-        RepoState.Ok or RepoState.NoReleases => Color.FromArgb(220, 245, 220),
-        RepoState.NotReachable => Color.FromArgb(250, 215, 215),
-        RepoState.RateLimited => Color.FromArgb(255, 235, 200),
-        RepoState.Checking => Color.FromArgb(215, 230, 250),
-        _ => SystemColors.Window
-    };
+        row.Cells[0].Value = st.Repo;
+        row.Cells[1].Value = StateText(st.State);
+        row.Cells[1].Tag = st.State;
+        row.Cells[2].Value = st.StableTag.Length > 0 ? st.StableTag : "–";
+        row.Cells[3].Value = st.PreTag.Length > 0 ? st.PreTag : "–";
+        row.Cells[4].Value = When(st.LastCheck);
+        row.Cells[5].Value = st.Details;
+        row.Cells[5].ToolTipText = st.Details;
+        row.Tag = st.Repo;
+    }
 
     private void RefreshRepoList()
     {
-        _lv.BeginUpdate();
+        var selected = new HashSet<string>(_grid.SelectedRows.Cast<DataGridViewRow>().Select(r => r.Tag as string ?? ""), StringComparer.OrdinalIgnoreCase);
+        var sortCol = _grid.SortedColumn;
+        var sortDir = _grid.SortOrder;
+
+        _grid.SuspendLayout();
         try
         {
-            _lv.Items.Clear();
+            _grid.Rows.Clear();
             foreach (var repo in _settings.Repositories)
             {
                 if (!_status.TryGetValue(repo, out var st))
@@ -527,32 +823,28 @@ public sealed class MainForm : Form
                     st = new RepoStatus { Repo = repo };
                     _status[repo] = st;
                 }
-                var item = new ListViewItem(repo) { Name = repo, BackColor = StateColor(st.State) };
-                item.SubItems.Add(StateText(st.State));
-                item.SubItems.Add(st.StableTag.Length > 0 ? st.StableTag : "-");
-                item.SubItems.Add(st.PreTag.Length > 0 ? st.PreTag : "-");
-                item.SubItems.Add(st.LastCheck?.ToString("g") ?? Lang.Get("never"));
-                item.SubItems.Add(st.Details);
-                _lv.Items.Add(item);
+                int i = _grid.Rows.Add();
+                FillRow(_grid.Rows[i], st);
             }
+            if (sortCol != null && sortDir != SortOrder.None)
+                _grid.Sort(sortCol, sortDir == SortOrder.Ascending ? System.ComponentModel.ListSortDirection.Ascending : System.ComponentModel.ListSortDirection.Descending);
+            _grid.ClearSelection();
+            foreach (DataGridViewRow r in _grid.Rows)
+                if (r.Tag is string name && selected.Contains(name)) r.Selected = true;
         }
         finally
         {
-            _lv.EndUpdate();
+            _grid.ResumeLayout();
         }
+        _repoCard.RightText = Lang.F("list_count", _settings.Repositories.Count);
+        _grid.Invalidate();
     }
 
     private void UpdateRepoRow(RepoStatus st)
     {
-        var items = _lv.Items.Find(st.Repo, false);
-        if (items.Length == 0) { RefreshRepoList(); return; }
-        var item = items[0];
-        item.BackColor = StateColor(st.State);
-        item.SubItems[1].Text = StateText(st.State);
-        item.SubItems[2].Text = st.StableTag.Length > 0 ? st.StableTag : "-";
-        item.SubItems[3].Text = st.PreTag.Length > 0 ? st.PreTag : "-";
-        item.SubItems[4].Text = st.LastCheck?.ToString("g") ?? Lang.Get("never");
-        item.SubItems[5].Text = st.Details;
+        var row = _grid.Rows.Cast<DataGridViewRow>().FirstOrDefault(r => string.Equals(r.Tag as string, st.Repo, StringComparison.OrdinalIgnoreCase));
+        if (row == null) { RefreshRepoList(); return; }
+        FillRow(row, st);
     }
 
     // =====================================================================
@@ -568,7 +860,7 @@ public sealed class MainForm : Form
                 Logger.Cleanup();
             }
 
-            UpdateStatusLine();
+            UpdateStatusDisplay();
             if (_checking || DateTime.UtcNow < _nextCheckUtc) return;
             await RunCheckAsync();
         }
@@ -582,14 +874,14 @@ public sealed class MainForm : Form
     {
         if (_checking)
         {
-            MessageBox.Show(this, Lang.Get("msg_already_checking"), Text, MessageBoxButtons.OK, MessageBoxIcon.Information);
+            if (Visible) ShowNotice(Lang.Get("msg_already_checking"), Tone.Muted);
             return;
         }
         if (_rateLimitUntilUtc.HasValue && _rateLimitUntilUtc.Value > DateTime.UtcNow)
         {
             string msg = Lang.F("msg_rate_wait", _rateLimitUntilUtc.Value.ToLocalTime().ToString("g"));
             Logger.Warn(msg);
-            if (Visible) MessageBox.Show(this, msg, Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            if (Visible) ShowNotice(msg, Tone.Warn);
             return;
         }
         try { await RunCheckAsync(); }
@@ -621,21 +913,28 @@ public sealed class MainForm : Form
             Logger.Warn(Lang.Get("log_round_skipped_nofolder"));
             _nextCheckUtc = DateTime.UtcNow.AddHours(EffectiveIntervalHours());
             Logger.Info(Lang.F("log_next", _nextCheckUtc.ToLocalTime().ToString("g")));
-            UpdateStatusLine();
-            if (Visible) MessageBox.Show(this, Lang.Get("msg_no_folder"), Text, MessageBoxButtons.OK, MessageBoxIcon.Information);
+            UpdateStatusDisplay();
+            if (Visible)
+            {
+                SetSettingsVisible(true);
+                _folderNotice.Show(Lang.Get("msg_no_folder"), Tone.Warn);
+            }
             return;
         }
 
         _checking = true;
         _btnCheckNow.Enabled = false;
         _miCheck.Enabled = false;
-        UpdateStatusLine();
 
         var repos = _settings.Repositories.ToList();
         string folder = _settings.DownloadFolder;
         string token = _settings.GetToken();
         int ok = 0, fail = 0, postponed = 0, newFiles = 0;
         _rateLimitUntilUtc = null;
+        _progressDone = 0;
+        _progressTotal = repos.Count;
+        _progressRepo = "";
+        UpdateStatusDisplay();
 
         Logger.Info(Lang.F("log_round_start", repos.Count, token.Length > 0 ? "yes/ja" : "no/nein"));
 
@@ -652,11 +951,14 @@ public sealed class MainForm : Form
                     st.Details = Lang.F("msg_rate_wait", _rateLimitUntilUtc.Value.ToLocalTime().ToString("g"));
                     UpdateRepoRow(st);
                     postponed++;
+                    _progressDone = i + 1;
                     continue;
                 }
 
                 st.State = RepoState.Checking;
+                _progressRepo = repo;
                 UpdateRepoRow(st);
+                UpdateStatusDisplay();
 
                 RepoCheckResult r = await _checker.CheckRepoAsync(repo, folder, token, _cts.Token);
 
@@ -677,9 +979,10 @@ public sealed class MainForm : Form
                     _rateLimitUntilUtc = r.RateLimitedUntilUtc ?? DateTime.UtcNow.AddHours(1);
                 }
                 newFiles += r.NewFiles;
+                _progressDone = i + 1;
 
                 if (_status.ContainsKey(repo)) UpdateRepoRow(st);
-                UpdateStatusLine();
+                UpdateStatusDisplay();
 
                 // small pause between repositories (avoids GitHub secondary rate limits)
                 if (i < repos.Count - 1 && !_rateLimitUntilUtc.HasValue)
@@ -698,6 +1001,7 @@ public sealed class MainForm : Form
         finally
         {
             _checking = false;
+            _progressRepo = "";
             if (!_exitRequested)
             {
                 _btnCheckNow.Enabled = true;
@@ -717,7 +1021,7 @@ public sealed class MainForm : Form
         _nextCheckUtc = next;
         Logger.Info(Lang.F("log_next", _nextCheckUtc.ToLocalTime().ToString("g")));
 
-        UpdateStatusLine();
+        UpdateStatusDisplay();
 
         if (newFiles > 0 && !Visible)
             _tray.ShowBalloonTip(5000, Lang.Get("app_title"), Lang.F("details_files", newFiles), ToolTipIcon.Info);
@@ -738,8 +1042,12 @@ public sealed class MainForm : Form
         return (reach, notReach, _settings.Repositories.Count);
     }
 
+    private static CultureInfo Culture => CultureInfo.CurrentCulture;
+    /// <summary>Compact local time: only the time for today, otherwise short date + time.</summary>
+    public static string When(DateTime? local) =>
+        local == null ? Lang.Get("never") : local.Value.ToString(local.Value.Date == DateTime.Today ? "t" : "g");
     private string StateNow() => _checking ? Lang.Get("status_checking") : Lang.Get("status_idle");
-    private string LastText() => _settings.LastCheckUtc?.ToLocalTime().ToString("g") ?? Lang.Get("never");
+    private string LastText() => When(_settings.LastCheckUtc?.ToLocalTime());
     private string NextText() => _nextCheckUtc == default ? Lang.Get("unknown") : _nextCheckUtc.ToLocalTime().ToString("g");
     private string RateText()
     {
@@ -749,10 +1057,77 @@ public sealed class MainForm : Form
         return s;
     }
 
-    private void UpdateStatusLine()
+    private bool RatePaused => _rateLimitUntilUtc.HasValue && _rateLimitUntilUtc.Value > DateTime.UtcNow;
+
+    /// <summary>Updates the instrument tiles, header progress line, check button and tray tooltip.</summary>
+    private void UpdateStatusDisplay()
     {
-        var (reach, _, total) = Counts();
-        _lblStatusLine.Text = Lang.F("status_line", StateNow(), LastText(), NextText(), reach, total, RateText());
+        var (reach, notReach, total) = Counts();
+        var ci = Culture;
+
+        // --- state tile
+        if (_checking)
+        {
+            string sub = _progressRepo.Length > 0 ? _progressRepo : Lang.Get("status_checking");
+            _tileState.Set(Lang.Get("tile_state"), Lang.F("tile_progress", Math.Min(_progressDone + 1, Math.Max(1, _progressTotal)), _progressTotal),
+                sub, Tone.Accent, Tone.Muted, null, RepoState.Checking);
+        }
+        else if (RatePaused)
+        {
+            _tileState.Set(Lang.Get("tile_state"), Lang.Get("status_paused"),
+                Lang.F("tile_until", _rateLimitUntilUtc!.Value.ToLocalTime().ToString("t")), Tone.Warn, Tone.Warn, null, RepoState.RateLimited);
+        }
+        else
+        {
+            string sub = _settings.HasToken ? Lang.Get("tile_token_on") : Lang.Get("tile_token_off");
+            _tileState.Set(Lang.Get("tile_state"), Lang.Get("status_idle"), sub, Tone.Neutral, _settings.HasToken ? Tone.Muted : Tone.Warn, null, RepoState.Ok);
+        }
+
+        // --- next check tile (mission-control countdown)
+        if (_checking)
+        {
+            _tileNext.Set(Lang.Get("tile_next"), Lang.Get("tile_running"), Lang.F("tile_last", LastText()), Tone.Accent);
+        }
+        else if (_nextCheckUtc == default)
+        {
+            _tileNext.Set(Lang.Get("tile_next"), "–", Lang.Get("unknown"));
+        }
+        else
+        {
+            TimeSpan left = _nextCheckUtc - DateTime.UtcNow;
+            if (left < TimeSpan.Zero) left = TimeSpan.Zero;
+            string countdown = left.TotalHours >= 100
+                ? $"T–{(int)left.TotalDays}d {left.Hours:00}h"
+                : $"T–{(int)left.TotalHours:00}:{left.Minutes:00}";
+            string sub = Lang.F("tile_next_sub", _nextCheckUtc.ToLocalTime().ToString("t"), LastText());
+            _tileNext.Set(Lang.Get("tile_next"), countdown, sub);
+        }
+
+        // --- reachable tile
+        string reachSub;
+        Tone reachTone;
+        if (total == 0) { reachSub = Lang.Get("tile_no_repos"); reachTone = Tone.Muted; }
+        else if (notReach > 0) { reachSub = Lang.F("tile_notreach", notReach); reachTone = Tone.Error; }
+        else if (reach == total) { reachSub = Lang.Get("tile_allreach"); reachTone = Tone.Ok; }
+        else { reachSub = Lang.Get("tile_not_checked"); reachTone = Tone.Muted; }
+        _tileReach.Set(Lang.Get("tile_reach"), $"{reach}/{total}", reachSub, Tone.Neutral, reachTone);
+
+        // --- API tile
+        if (_checker.RateRemaining.HasValue && _checker.RateLimit is int lim && lim > 0)
+        {
+            int rem = _checker.RateRemaining.Value;
+            string reset = _checker.RateResetUtc.HasValue ? Lang.F("tile_reset", _checker.RateResetUtc.Value.ToLocalTime().ToString("t")) : "";
+            double ratio = rem / (double)lim;
+            Tone t = ratio < 0.1 ? Tone.Error : ratio < 0.25 ? Tone.Warn : Tone.Neutral;
+            _tileApi.Set(Lang.Get("tile_api"), rem.ToString("N0", ci), Lang.F("tile_api_sub", lim.ToString("N0", ci), reset).Trim(), t, Tone.Muted, ratio);
+        }
+        else
+        {
+            _tileApi.Set(Lang.Get("tile_api"), "–", Lang.Get(_settings.HasToken ? "tile_api_unknown_token" : "tile_api_unknown"), Tone.Neutral, Tone.Muted, null);
+        }
+
+        _header.Progress = _checking && _progressTotal > 0 ? _progressDone / (double)_progressTotal : null;
+        _btnCheckNow.Text = Lang.Get(_checking ? "btn_checking" : "btn_check_now");
 
         string tip = $"GitHub Release Fetcher - {StateNow()}";
         _tray.Text = tip.Length > 63 ? tip.Substring(0, 63) : tip;
@@ -781,17 +1156,12 @@ public sealed class MainForm : Form
 
     private void AppendDetail(string line)
     {
-        if (_txtDetails.IsDisposed) return;
-        if (_txtDetails.TextLength > 400_000)
-        {
-            string t = _txtDetails.Text;
-            int cut = t.IndexOf('\n', t.Length / 2);
-            _txtDetails.Text = cut > 0 ? t.Substring(cut + 1) : "";
-        }
-        _txtDetails.AppendText(line + Environment.NewLine);
+        if (_console.IsDisposed) return;
+        _console.AppendLine(line);
+        _lblLastLine.Text = line;
     }
 
-    /// <summary>Shows the last log lines (incl. startup messages) in the detail area.</summary>
+    /// <summary>Shows the last log lines (incl. startup messages) in the activity area.</summary>
     private void LoadLogTail()
     {
         try
@@ -803,10 +1173,9 @@ public sealed class MainForm : Form
             {
                 lines = sr.ReadToEnd().Split('\n');
             }
-            var tail = lines.Select(l => l.TrimEnd('\r')).Where(l => l.Length > 0).TakeLast(300);
-            _txtDetails.Text = string.Join(Environment.NewLine, tail) + Environment.NewLine;
-            _txtDetails.SelectionStart = _txtDetails.TextLength;
-            _txtDetails.ScrollToCaret();
+            var tail = lines.Select(l => l.TrimEnd('\r')).Where(l => l.Length > 0).TakeLast(300).ToList();
+            _console.SetLines(tail);
+            if (tail.Count > 0) _lblLastLine.Text = tail[^1];
         }
         catch { /* ignore */ }
     }
@@ -818,7 +1187,7 @@ public sealed class MainForm : Form
         catch
         {
             try { Process.Start(new ProcessStartInfo("notepad.exe", $"\"{Logger.LogFile}\"") { UseShellExecute = true }); }
-            catch (Exception ex) { MessageBox.Show(this, ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error); }
+            catch (Exception ex) { ThemedDialog.Info(this, Text, ex.Message, Tone.Error); }
         }
     }
 
@@ -874,13 +1243,179 @@ public sealed class MainForm : Form
         if (disposing)
         {
             Logger.LineWritten -= OnLogLine;
+            Theme.Changed -= OnThemeChanged;
             _timer.Dispose();
+            _noticeTimer.Dispose();
             _tray.Visible = false;
             _tray.Dispose();
             _trayMenu.Dispose();
+            _gridMenu.Dispose();
             _checker.Dispose();
             _cts.Dispose();
         }
         base.Dispose(disposing);
+    }
+}
+
+/// <summary>Vertical settings stack: section caption + controls, full width, scrolls when needed.</summary>
+public sealed class SettingsFlow : FlowLayoutPanel, IThemed
+{
+    private readonly List<Control> _fullWidth = new();
+
+    public SettingsFlow()
+    {
+        FlowDirection = FlowDirection.TopDown;
+        WrapContents = false;
+        AutoScroll = true;
+        DoubleBuffered = true;
+        ApplyTheme();
+    }
+
+    public void AddSection(CaptionLabel caption, params Control[] items)
+    {
+        caption.Margin = new Padding(0, Ui.S(20), 0, Ui.S(8));
+        Add(caption, true);
+        foreach (var c in items)
+        {
+            c.Margin = new Padding(0, 0, 0, Ui.S(8));
+            bool full = c is InputBox or SegmentedControl or NoticeLine or ThemedLabel;
+            Add(c, full);
+        }
+    }
+
+    public void AddFooter(Control c)
+    {
+        c.Margin = new Padding(0, Ui.S(28), 0, 0);
+        Add(c, true);
+    }
+
+    private void Add(Control c, bool fullWidth)
+    {
+        if (fullWidth) _fullWidth.Add(c);
+        Controls.Add(c);
+    }
+
+    public void ApplyTheme() => BackColor = Theme.Current.Surface;
+
+    protected override void OnLayout(LayoutEventArgs levent)
+    {
+        int w = ClientSize.Width - Padding.Horizontal - (VerticalScroll.Visible ? 0 : 0);
+        foreach (var c in _fullWidth)
+        {
+            if (c is ThemedLabel l)
+            {
+                l.MaximumSize = new Size(w, 0);
+                l.AutoSize = true;
+            }
+            else if (c.Width != w) c.Width = w;
+        }
+        base.OnLayout(levent);
+    }
+}
+
+/// <summary>Read-only log console with colored levels; keeps its own line buffer so it can re-render on theme change.</summary>
+public sealed class ConsoleBox : RichTextBox
+{
+    private const int MaxLines = 1500;
+    private readonly List<string> _lines = new();
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+    private const int WM_SETREDRAW = 0x000B;
+    private const int WM_VSCROLL = 0x0115;
+    private const int SB_BOTTOM = 7;
+
+    public ConsoleBox()
+    {
+        ReadOnly = true;
+        BorderStyle = BorderStyle.None;
+        DetectUrls = false;
+        WordWrap = true;
+        ScrollBars = RichTextBoxScrollBars.Vertical;
+        Font = Theme.MonoSmall;
+        ApplyColors();
+    }
+
+    private void ApplyColors()
+    {
+        BackColor = Theme.Current.ConsoleBg;
+        ForeColor = Theme.Current.ConsoleText;
+    }
+
+    public void SetLines(IEnumerable<string> lines)
+    {
+        _lines.Clear();
+        _lines.AddRange(lines);
+        if (_lines.Count > MaxLines) _lines.RemoveRange(0, _lines.Count - MaxLines);
+        Rerender();
+    }
+
+    public void AppendLine(string line)
+    {
+        _lines.Add(line);
+        if (_lines.Count > MaxLines + 300)
+        {
+            _lines.RemoveRange(0, _lines.Count - MaxLines);
+            Rerender();
+            return;
+        }
+        Write(line);
+        ScrollToEnd();
+    }
+
+    public void Rerender()
+    {
+        if (IsDisposed) return;
+        ApplyColors();
+        bool handle = IsHandleCreated;
+        if (handle) SendMessage(Handle, WM_SETREDRAW, IntPtr.Zero, IntPtr.Zero);
+        try
+        {
+            Clear();
+            foreach (var l in _lines) Write(l);
+        }
+        finally
+        {
+            if (handle)
+            {
+                SendMessage(Handle, WM_SETREDRAW, (IntPtr)1, IntPtr.Zero);
+                Invalidate();
+            }
+        }
+        ScrollToEnd();
+    }
+
+    public void ScrollToEnd()
+    {
+        if (!IsHandleCreated) return;
+        SendMessage(Handle, WM_VSCROLL, (IntPtr)SB_BOTTOM, IntPtr.Zero);
+    }
+
+    private void Write(string line)
+    {
+        var pal = Theme.Current;
+        // format: "yyyy-MM-dd HH:mm:ss [LEVEL] message"
+        int lb = line.IndexOf('[');
+        int rb = lb >= 0 ? line.IndexOf(']', lb) : -1;
+        if (lb == 20 && rb > lb)
+        {
+            string time = line.Substring(0, lb);
+            string level = line.Substring(lb, rb - lb + 1);
+            string msg = line.Substring(rb + 1);
+            Color lc = level.Contains("ERROR") ? pal.Error : level.Contains("WARN") ? pal.Warn : pal.TextMuted;
+            Color mc = level.Contains("ERROR") ? pal.Error : level.Contains("WARN") ? pal.Warn : pal.ConsoleText;
+            Append(time, pal.TextMuted);
+            Append(level, lc);
+            Append(msg + "\n", mc);
+        }
+        else Append(line + "\n", pal.ConsoleText);
+    }
+
+    private void Append(string text, Color color)
+    {
+        SelectionStart = TextLength;
+        SelectionLength = 0;
+        SelectionColor = color;
+        AppendText(text);
     }
 }
