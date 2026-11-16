@@ -14,6 +14,8 @@ public sealed class AppSettings
     public List<string> Repositories { get; set; } = new();
     public int CheckIntervalHours { get; set; } = 3;
     public string Language { get; set; } = "en";
+    /// <summary>"system" (follow Windows), "light" or "dark".</summary>
+    public string Theme { get; set; } = "system";
     public string EncryptedToken { get; set; } = "";
     public DateTime? LastCheckUtc { get; set; }
 
@@ -71,6 +73,7 @@ public sealed class AppSettings
         if (CheckIntervalHours < MinIntervalHours) CheckIntervalHours = 3;
         if (CheckIntervalHours > MaxIntervalHours) CheckIntervalHours = MaxIntervalHours;
         if (Language != "de" && Language != "en") Language = "en";
+        if (Theme != "system" && Theme != "light" && Theme != "dark") Theme = "system";
         DownloadFolder ??= "";
         EncryptedToken ??= "";
     }
