@@ -7,10 +7,14 @@ namespace GitHubReleaseFetcher;
 
 public enum RepoState { Pending, Checking, Ok, NoReleases, NotReachable, RateLimited }
 
+/// <summary>Why a repository was not reachable (shown in the status column instead of a generic text).</summary>
+public enum FailReason { None, NotFound, Unauthorized, Forbidden, Network, Other }
+
 public sealed class RepoStatus
 {
     public string Repo { get; init; } = "";
     public RepoState State { get; set; } = RepoState.Pending;
+    public FailReason Reason { get; set; }
     public string StableTag { get; set; } = "";
     public string PreTag { get; set; } = "";
     public DateTime? LastCheck { get; set; }
@@ -20,6 +24,7 @@ public sealed class RepoStatus
 public sealed class RepoCheckResult
 {
     public RepoState State { get; set; }
+    public FailReason Reason { get; set; }
     public string StableTag { get; set; } = "";
     public string PreTag { get; set; } = "";
     public string Details { get; set; } = "";
@@ -188,6 +193,13 @@ public sealed class ReleaseChecker : IDisposable
                 }
 
                 result.State = RepoState.NotReachable;
+                result.Reason = resp.StatusCode switch
+                {
+                    HttpStatusCode.NotFound => FailReason.NotFound,
+                    HttpStatusCode.Unauthorized => FailReason.Unauthorized,
+                    HttpStatusCode.Forbidden => FailReason.Forbidden,
+                    _ => FailReason.Other
+                };
                 string key = resp.StatusCode switch
                 {
                     HttpStatusCode.NotFound => "log_repo_notfound",
@@ -211,6 +223,7 @@ public sealed class ReleaseChecker : IDisposable
         catch (OperationCanceledException)
         {
             result.State = RepoState.NotReachable;
+            result.Reason = FailReason.Network;
             string msg = Lang.F("log_repo_timeout", repo);
             result.Details = msg.Replace($"[{repo}] ", "");
             Logger.Warn(msg);
@@ -219,6 +232,7 @@ public sealed class ReleaseChecker : IDisposable
         catch (JsonException)
         {
             result.State = RepoState.NotReachable;
+            result.Reason = FailReason.Other;
             string msg = Lang.F("log_repo_badjson", repo);
             result.Details = msg.Replace($"[{repo}] ", "");
             Logger.Warn(msg);
@@ -227,6 +241,7 @@ public sealed class ReleaseChecker : IDisposable
         catch (Exception ex)
         {
             result.State = RepoState.NotReachable;
+            result.Reason = FailReason.Network;
             string msg = Lang.F("log_repo_neterror", repo, ex.GetBaseException().Message);
             result.Details = msg.Replace($"[{repo}] ", "");
             Logger.Warn(msg);

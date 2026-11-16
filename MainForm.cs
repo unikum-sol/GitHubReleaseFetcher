@@ -18,6 +18,9 @@ public sealed class MainForm : Form
     private bool _exitRequested;
     private bool _balloonShown;
     private bool _loadingUi;
+    private FormWindowState _restoreState = FormWindowState.Normal;
+    private readonly ToolTip _tips = new() { ShowAlways = true };
+    private Icon? _trayIcon;
     private DateTime _nextCheckUtc;
     private DateTime? _rateLimitUntilUtc;
     private DateTime _lastLogCleanup = DateTime.MinValue;
@@ -43,10 +46,13 @@ public sealed class MainForm : Form
     // ---------------- repositories
     private readonly InputBox _txtRepo = new() { Dock = DockStyle.Fill };
     private readonly FlatButton _btnAdd = new() { Kind = ButtonKind.Secondary, IconGlyph = Theme.IcoAdd, AutoSize = true, Dock = DockStyle.Right };
-    private readonly NoticeLine _repoNotice = new() { Dock = DockStyle.Top };
+    private readonly NoticeLine _repoNotice = new() { Dock = DockStyle.Top, AutoHide = true, Visible = false };
     private readonly ThemedGrid _grid = new() { Dock = DockStyle.Fill, StateColumn = 1 };
     private readonly ContextMenuStrip _gridMenu = new();
-    private readonly ToolStripMenuItem _miRemove = new() { ShortcutKeyDisplayString = "Del" };
+    private readonly ToolStripMenuItem _miRemove = new();
+    private readonly ToolStripMenuItem _miOpenReleases = new();
+    private readonly ToolStripMenuItem _miOpenRepoFolder = new();
+    private readonly ToolStripMenuItem _miCopyName = new();
 
     // ---------------- activity
     private readonly FlatButton _btnToggleLog = new() { Kind = ButtonKind.Ghost, IconOnly = true };
@@ -60,7 +66,8 @@ public sealed class MainForm : Form
     private readonly FlatButton _btnCloseSettings = new() { Kind = ButtonKind.Ghost, IconOnly = true, Vector = VectorIcon.Close };
     private readonly SettingsFlow _settingsFlow = new();
     private readonly CaptionLabel _capTheme = new();
-    private readonly SegmentedControl _segTheme = new();
+    // items are set here (texts replaced in ApplyLanguage) so SelectedIndex can be restored before ApplyLanguage runs
+    private readonly SegmentedControl _segTheme = new() { Items = new[] { "System", "Light", "Dark" } };
     private readonly CaptionLabel _capLanguage = new();
     private readonly SegmentedControl _segLanguage = new() { Items = new[] { "English", "Deutsch" } };
     private readonly CaptionLabel _capFolder = new();
@@ -83,11 +90,11 @@ public sealed class MainForm : Form
     // ---------------- tray
     private readonly NotifyIcon _tray = new();
     private readonly ContextMenuStrip _trayMenu = new();
-    private readonly ToolStripMenuItem _miState = new() { Enabled = false };
-    private readonly ToolStripMenuItem _miLast = new() { Enabled = false };
-    private readonly ToolStripMenuItem _miNext = new() { Enabled = false };
-    private readonly ToolStripMenuItem _miRepos = new() { Enabled = false };
-    private readonly ToolStripMenuItem _miRate = new() { Enabled = false };
+    private readonly ToolStripMenuItem _miState = new() { Enabled = false, Tag = "info" };
+    private readonly ToolStripMenuItem _miLast = new() { Enabled = false, Tag = "info" };
+    private readonly ToolStripMenuItem _miNext = new() { Enabled = false, Tag = "info" };
+    private readonly ToolStripMenuItem _miRepos = new() { Enabled = false, Tag = "info" };
+    private readonly ToolStripMenuItem _miRate = new() { Enabled = false, Tag = "info" };
     private readonly ToolStripMenuItem _miOpen = new();
     private readonly ToolStripMenuItem _miCheck = new();
     private readonly ToolStripMenuItem _miExit = new();
@@ -139,6 +146,7 @@ public sealed class MainForm : Form
         Logger.Info(Lang.F("log_next", _nextCheckUtc.ToLocalTime().ToString("g")));
 
         Theme.Changed += OnThemeChanged;
+        Microsoft.Win32.SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
         _timer.Tick += OnTimerTick;
         _timer.Start();
         _noticeTimer.Tick += (_, _) => { _noticeTimer.Stop(); _repoNotice.Clear(); };
@@ -194,19 +202,34 @@ public sealed class MainForm : Form
         inputRow.Controls.Add(_btnAdd);
         _repoNotice.Height = Ui.S(30);
 
-        _grid.Columns.Add(MakeColumn("repo", 30, Ui.S(140), Theme.Ui));
-        _grid.Columns.Add(MakeColumn("status", 19, Ui.S(120), Theme.Ui));
-        _grid.Columns.Add(MakeColumn("release", 14, Ui.S(80), Theme.Mono));
-        _grid.Columns.Add(MakeColumn("pre", 15, Ui.S(80), Theme.Mono));
-        _grid.Columns.Add(MakeColumn("last", 12, Ui.S(80), Theme.Mono));
-        _grid.Columns.Add(MakeColumn("details", 26, Ui.S(80), Theme.Ui));
-        _grid.Columns["details"]!.DefaultCellStyle.ForeColor = Theme.Current.TextSecondary;
+        _grid.Columns.Add(MakeColumn("repo", 28, Ui.S(140), Theme.UiSemi));
+        _grid.Columns.Add(MakeColumn("status", 20, Ui.S(170), Theme.Ui));
+        _grid.Columns.Add(MakeColumn("release", 13, Ui.S(80), Theme.MonoSmall));
+        _grid.Columns.Add(MakeColumn("pre", 14, Ui.S(110), Theme.MonoSmall));
+        _grid.Columns.Add(MakeColumn("last", 9, Ui.S(90), Theme.MonoSmall));
+        _grid.Columns.Add(MakeColumn("details", 28, Ui.S(60), Theme.Ui));
+        ApplyColumnColors();
         _grid.ContextMenuStrip = _gridMenu;
+        _gridMenu.Items.Add(_miOpenReleases);
+        _gridMenu.Items.Add(_miOpenRepoFolder);
+        _gridMenu.Items.Add(_miCopyName);
+        _gridMenu.Items.Add(new ToolStripSeparator());
         _gridMenu.Items.Add(_miRemove);
         _gridMenu.Renderer = new ThemedMenuRenderer();
+        _gridMenu.Font = Theme.Ui; // layout must be measured with the font the renderer draws with
         _gridMenu.ShowImageMargin = false;
-        _gridMenu.Opening += (_, e) => { _miRemove.Enabled = _grid.SelectedRows.Count > 0; if (!_miRemove.Enabled) e.Cancel = true; };
+        _gridMenu.Opening += (_, e) =>
+        {
+            int n = _grid.SelectedRows.Count;
+            if (n == 0) { e.Cancel = true; return; }
+            _miRemove.Enabled = true;
+            _miOpenReleases.Enabled = _miOpenRepoFolder.Enabled = _miCopyName.Enabled = n == 1;
+        };
         _miRemove.Click += (_, _) => RemoveSelected();
+        _miOpenReleases.Click += (_, _) => { if (SelectedRepo() is string r) OpenUrl($"https://github.com/{r}/releases"); };
+        _miOpenRepoFolder.Click += (_, _) => { if (SelectedRepo() is string r) OpenRepoFolder(r); };
+        _miCopyName.Click += (_, _) => { if (SelectedRepo() is string r) { try { Clipboard.SetText(r); } catch { /* clipboard busy */ } } };
+        _grid.CellDoubleClick += (_, e) => { if (e.RowIndex >= 0 && _grid.Rows[e.RowIndex].Tag is string r) OpenUrl($"https://github.com/{r}/releases"); };
 
         _repoCard.Controls.Add(_grid);
         _repoCard.Controls.Add(_repoNotice);
@@ -222,6 +245,11 @@ public sealed class MainForm : Form
         _btnToggleLog.Height = Ui.S(28);
         _btnOpenLog.Height = Ui.S(28);
         _activityCard.Resize += (_, _) => LayoutActivityButtons();
+        _activityCard.MouseClick += (_, e) =>
+        {
+            if (e.Button == MouseButtons.Left && e.Y < CardPanel.CaptionHeight) SetLogExpanded(!_settings.LogExpanded, save: true);
+        };
+        _activityCard.MouseMove += (_, e) => _activityCard.Cursor = e.Y < CardPanel.CaptionHeight ? Cursors.Hand : Cursors.Default;
         _body.Resize += (_, _) =>
         {
             if (_settings.LogExpanded && _activityCard.Height != ExpandedLogHeight()) _activityCard.Height = ExpandedLogHeight();
@@ -284,6 +312,12 @@ public sealed class MainForm : Form
         Resize += OnFormResize;
         Layout += (_, _) => LayoutSettingsPanel();
         FormClosing += OnFormClosing;
+        FormClosed += (_, _) =>
+        {
+            // reached on Windows shutdown / logoff (exit via tray sets these earlier); stops a running check
+            _exitRequested = true;
+            try { _cts.Cancel(); } catch { /* ignore */ }
+        };
         Shown += (_, _) =>
         {
             LoadLogTail();
@@ -309,9 +343,10 @@ public sealed class MainForm : Form
     {
         _settingsPanel.Paint += (_, e) =>
         {
-            using var p = new Pen(Theme.Current.Line);
+            using var p = new Pen(Theme.Current.LineStrong);
             e.Graphics.DrawLine(p, 0, 0, 0, _settingsPanel.Height);
         };
+        _settingsPanel.Padding = new Padding(1, 0, 0, 0); // keep the edge line visible
 
         var head = new ThemedPanel { Dock = DockStyle.Top, Height = Ui.S(60), BackRole = ThemedPanel.Role.Surface, Padding = new Padding(Ui.S(24), Ui.S(14), Ui.S(14), 0) };
         _lblSettingsTitle.Dock = DockStyle.Left;
@@ -387,6 +422,7 @@ public sealed class MainForm : Form
         _activityCard.Padding = new Padding(Ui.S(16), CardPanel.CaptionHeight + Ui.S(4), Ui.S(16), Ui.S(expanded ? 12 : 8));
         _btnToggleLog.Vector = expanded ? VectorIcon.ChevronDown : VectorIcon.ChevronUp;
         _btnToggleLog.Text = Lang.Get(expanded ? "btn_hide_log" : "btn_show_log");
+        _tips.SetToolTip(_btnToggleLog, _btnToggleLog.Text);
         _btnToggleLog.Invalidate();
         if (expanded) _console.ScrollToEnd();
         LayoutActivityButtons();
@@ -398,9 +434,17 @@ public sealed class MainForm : Form
         _settingsPanel.SetBounds(ClientSize.Width - w, _header.Bottom, w, Math.Max(0, ClientSize.Height - _header.Bottom));
     }
 
-    /// <summary>Expanded log takes about a third of the body, so the repository table always keeps most of the space.</summary>
-    private int ExpandedLogHeight() =>
-        Math.Clamp((int)(_body.ClientSize.Height * 0.32), Ui.S(150), Ui.S(260));
+    /// <summary>
+    /// Expanded log takes about a third of the body, but never so much that the repository table
+    /// shows fewer than about three rows (matters at the minimum window size).
+    /// </summary>
+    private int ExpandedLogHeight()
+    {
+        int h = _body.ClientSize.Height;
+        int spaceLeft = h - _body.Padding.Vertical - _tiles.Height - Ui.S(24) - Ui.S(250); // 250 = repo card with ~3 rows
+        int wanted = Math.Min((int)(h * 0.32), spaceLeft);
+        return Math.Clamp(wanted, Ui.S(96), Ui.S(260));
+    }
 
     private void SetSettingsVisible(bool visible)
     {
@@ -424,6 +468,7 @@ public sealed class MainForm : Form
         _trayMenu.Items.Add(new ToolStripSeparator());
         _trayMenu.Items.Add(_miExit);
         _trayMenu.Renderer = new ThemedMenuRenderer();
+        _trayMenu.Font = Theme.Ui;
         _trayMenu.ShowImageMargin = false;
         _trayMenu.Opening += (_, _) => UpdateTrayMenu();
 
@@ -431,7 +476,8 @@ public sealed class MainForm : Form
         _miCheck.Click += async (_, _) => await ManualCheckAsync();
         _miExit.Click += (_, _) => ExitApplication();
 
-        _tray.Icon = icon;
+        _trayIcon = new Icon(icon, SystemInformation.SmallIconSize);
+        _tray.Icon = _trayIcon;
         _tray.Text = "GitHub Release Fetcher";
         _tray.ContextMenuStrip = _trayMenu;
         _tray.Visible = true;
@@ -456,6 +502,7 @@ public sealed class MainForm : Form
         _btnOpenLog.Text = Lang.Get("btn_open_log");
         _btnToggleLog.Text = Lang.Get(_settings.LogExpanded ? "btn_hide_log" : "btn_show_log");
         _miRemove.Text = Lang.Get("btn_remove");
+        _miRemove.ShortcutKeyDisplayString = Lang.Get("key_del");
         _grid.EmptyText = Lang.Get("grid_empty");
 
         _grid.Columns["repo"]!.HeaderText = Lang.Get("col_repo");
@@ -465,7 +512,7 @@ public sealed class MainForm : Form
         _grid.Columns["last"]!.HeaderText = Lang.Get("col_lastcheck");
         _grid.Columns["details"]!.HeaderText = Lang.Get("col_details");
 
-        _lblSettingsTitle.Text = Lang.Get("grp_settings");
+        _lblSettingsTitle.Text = Lang.Get("grp_settings").ToUpperInvariant();
         _btnCloseSettings.Text = Lang.Get("btn_close");
         _capTheme.Text = Lang.Get("sec_theme");
         _segTheme.Items = new[] { Lang.Get("theme_system"), Lang.Get("theme_light"), Lang.Get("theme_dark") };
@@ -475,6 +522,18 @@ public sealed class MainForm : Form
         _btnBrowse.Text = Lang.Get("btn_browse");
         _btnOpenFolder.Text = Lang.Get("btn_open_folder");
         _capInterval.Text = Lang.Get("sec_interval");
+        _segTheme.Caption = Lang.Get("sec_theme");
+        _segLanguage.Caption = Lang.Get("sec_language");
+        _numInterval.Caption = Lang.Get("sec_interval");
+        _numInterval.SetSilently(_numInterval.Value);
+        _tips.SetToolTip(_btnCheckNow, Lang.Get("tip_check"));
+        _tips.SetToolTip(_btnSettings, Lang.Get("tip_settings"));
+        _tips.SetToolTip(_btnCloseSettings, Lang.Get("tip_close"));
+        _tips.SetToolTip(_btnOpenLog, Lang.Get("tip_open_log"));
+        _tips.SetToolTip(_btnToggleLog, _btnToggleLog.Text);
+        _miOpenReleases.Text = Lang.Get("mi_open_releases");
+        _miOpenRepoFolder.Text = Lang.Get("mi_open_repo_folder");
+        _miCopyName.Text = Lang.Get("mi_copy_name");
         _capToken.Text = Lang.Get("sec_token");
         _txtToken.Box.Placeholder = Lang.Get("token_placeholder");
         _btnSaveToken.Text = Lang.Get("btn_save_token");
@@ -522,10 +581,24 @@ public sealed class MainForm : Form
     {
         BackColor = Theme.Current.Bg;
         Ui.ApplyThemeTree(this);
-        _grid.Columns["details"]!.DefaultCellStyle.ForeColor = Theme.Current.TextSecondary;
+        ApplyColumnColors();
         _console.Rerender();
         UpdateTokenState();
         UpdateEffectiveInterval();
+    }
+
+    private void ApplyColumnColors()
+    {
+        _grid.Columns["details"]!.DefaultCellStyle.ForeColor = Theme.Current.TextSecondary;
+        _grid.Columns["last"]!.DefaultCellStyle.ForeColor = Theme.Current.TextSecondary;
+    }
+
+    private void OnUserPreferenceChanged(object? sender, Microsoft.Win32.UserPreferenceChangedEventArgs e)
+    {
+        if (e.Category is not (Microsoft.Win32.UserPreferenceCategory.General or Microsoft.Win32.UserPreferenceCategory.Accessibility or
+            Microsoft.Win32.UserPreferenceCategory.Color or Microsoft.Win32.UserPreferenceCategory.VisualStyle)) return;
+        if (IsDisposed || !IsHandleCreated) return;
+        try { BeginInvoke(new Action(Theme.Refresh)); } catch { /* closing */ }
     }
 
     protected override void OnHandleCreated(EventArgs e)
@@ -606,7 +679,9 @@ public sealed class MainForm : Form
         _tokenResult.Show(Lang.Get("token_validating"), Tone.Muted);
         try
         {
-            var (ok, limit, error) = await _checker.ValidateTokenAsync(token, _cts.Token);
+            bool ok; int? limit; string error;
+            try { (ok, limit, error) = await _checker.ValidateTokenAsync(token, _cts.Token); }
+            catch (OperationCanceledException) { return; }
             string msg;
             if (ok)
             {
@@ -766,7 +841,8 @@ public sealed class MainForm : Form
     {
         var names = _grid.SelectedRows.Cast<DataGridViewRow>().Select(r => r.Cells["repo"].Value?.ToString() ?? "").Where(n => n.Length > 0).ToList();
         if (names.Count == 0) return;
-        if (!ThemedDialog.Confirm(this, Lang.Get("app_title"), Lang.F("confirm_remove", names.Count), Lang.Get("btn_remove_confirm"), Lang.Get("btn_cancel")))
+        string question = names.Count == 1 ? Lang.F("confirm_remove_one", names[0]) : Lang.F("confirm_remove", names.Count);
+        if (!ThemedDialog.Confirm(this, Lang.Get("app_title"), question, Lang.Get("btn_remove_confirm"), Lang.Get("btn_cancel")))
             return;
 
         foreach (var r in names)
@@ -782,6 +858,27 @@ public sealed class MainForm : Form
         ShowNotice(Lang.F("msg_removed", names.Count), Tone.Muted);
     }
 
+    public static string StateText(RepoStatus st) => st.State == RepoState.NotReachable
+        ? st.Reason switch
+        {
+            FailReason.NotFound => Lang.Get("st_notfound"),
+            FailReason.Unauthorized => Lang.Get("st_unauthorized"),
+            FailReason.Forbidden => Lang.Get("st_forbidden"),
+            FailReason.Network => Lang.Get("st_network"),
+            _ => Lang.Get("st_notreachable")
+        }
+        : StateText(st.State);
+
+    /// <summary>Short instruction for the details column; the technical message stays in the tooltip and the log.</summary>
+    private static string DetailsText(RepoStatus st) => st.State != RepoState.NotReachable ? st.Details : st.Reason switch
+    {
+        FailReason.NotFound => Lang.Get("hint_notfound"),
+        FailReason.Unauthorized => Lang.Get("hint_unauthorized"),
+        FailReason.Forbidden => Lang.Get("hint_forbidden"),
+        FailReason.Network => Lang.Get("hint_network"),
+        _ => st.Details
+    };
+
     public static string StateText(RepoState s) => s switch
     {
         RepoState.Pending => Lang.Get("st_pending"),
@@ -796,12 +893,14 @@ public sealed class MainForm : Form
     private static void FillRow(DataGridViewRow row, RepoStatus st)
     {
         row.Cells[0].Value = st.Repo;
-        row.Cells[1].Value = StateText(st.State);
+        row.Cells[1].Value = StateText(st);
         row.Cells[1].Tag = st.State;
+        row.Cells[1].ToolTipText = st.Details;
         row.Cells[2].Value = st.StableTag.Length > 0 ? st.StableTag : "–";
         row.Cells[3].Value = st.PreTag.Length > 0 ? st.PreTag : "–";
-        row.Cells[4].Value = When(st.LastCheck);
-        row.Cells[5].Value = st.Details;
+        row.Cells[4].Value = st.LastCheck.HasValue ? When(st.LastCheck) : "–";
+        row.Cells[4].ToolTipText = st.LastCheck.HasValue ? st.LastCheck.Value.ToString("g") : Lang.Get("never");
+        row.Cells[5].Value = DetailsText(st);
         row.Cells[5].ToolTipText = st.Details;
         row.Tag = st.Repo;
     }
@@ -964,6 +1063,7 @@ public sealed class MainForm : Form
 
                 // repo may have been removed from the list meanwhile
                 st.State = r.State;
+                st.Reason = r.Reason;
                 st.Details = r.Details;
                 if (r.State != RepoState.RateLimited) st.LastCheck = DateTime.Now;
                 if (r.State == RepoState.Ok || r.State == RepoState.NoReleases)
@@ -1070,7 +1170,7 @@ public sealed class MainForm : Form
         {
             string sub = _progressRepo.Length > 0 ? _progressRepo : Lang.Get("status_checking");
             _tileState.Set(Lang.Get("tile_state"), Lang.F("tile_progress", Math.Min(_progressDone + 1, Math.Max(1, _progressTotal)), _progressTotal),
-                sub, Tone.Accent, Tone.Muted, null, RepoState.Checking);
+                sub, Tone.Neutral, Tone.Muted, null, RepoState.Checking);
         }
         else if (RatePaused)
         {
@@ -1086,7 +1186,7 @@ public sealed class MainForm : Form
         // --- next check tile (mission-control countdown)
         if (_checking)
         {
-            _tileNext.Set(Lang.Get("tile_next"), Lang.Get("tile_running"), Lang.F("tile_last", LastText()), Tone.Accent);
+            _tileNext.Set(Lang.Get("tile_next"), Lang.Get("tile_running"), Lang.F("tile_last", LastText()));
         }
         else if (_nextCheckUtc == default)
         {
@@ -1107,7 +1207,7 @@ public sealed class MainForm : Form
         string reachSub;
         Tone reachTone;
         if (total == 0) { reachSub = Lang.Get("tile_no_repos"); reachTone = Tone.Muted; }
-        else if (notReach > 0) { reachSub = Lang.F("tile_notreach", notReach); reachTone = Tone.Error; }
+        else if (notReach > 0) { reachSub = FailSummary(notReach); reachTone = Tone.Error; }
         else if (reach == total) { reachSub = Lang.Get("tile_allreach"); reachTone = Tone.Ok; }
         else { reachSub = Lang.Get("tile_not_checked"); reachTone = Tone.Muted; }
         _tileReach.Set(Lang.Get("tile_reach"), $"{reach}/{total}", reachSub, Tone.Neutral, reachTone);
@@ -1129,8 +1229,47 @@ public sealed class MainForm : Form
         _header.Progress = _checking && _progressTotal > 0 ? _progressDone / (double)_progressTotal : null;
         _btnCheckNow.Text = Lang.Get(_checking ? "btn_checking" : "btn_check_now");
 
-        string tip = $"GitHub Release Fetcher - {StateNow()}";
+        string tip = $"GitHub Release Fetcher - {StateNow()} ({reach}/{total})";
         _tray.Text = tip.Length > 63 ? tip.Substring(0, 63) : tip;
+    }
+
+    /// <summary>"2 not found" if all failures share one cause, otherwise "3 not reachable".</summary>
+    private string FailSummary(int notReach)
+    {
+        var reasons = _settings.Repositories
+            .Select(r => _status.TryGetValue(r, out var st) ? st : null)
+            .Where(st => st != null && st.State == RepoState.NotReachable)
+            .Select(st => st!.Reason).Distinct().ToList();
+        if (reasons.Count != 1) return Lang.F("tile_notreach", notReach);
+        return reasons[0] switch
+        {
+            FailReason.NotFound => Lang.F("tile_fail_notfound", notReach),
+            FailReason.Unauthorized => Lang.F("tile_fail_unauthorized", notReach),
+            FailReason.Forbidden => Lang.F("tile_fail_forbidden", notReach),
+            FailReason.Network => Lang.F("tile_fail_network", notReach),
+            _ => Lang.F("tile_notreach", notReach)
+        };
+    }
+
+    private string? SelectedRepo() =>
+        _grid.SelectedRows.Count == 1 ? _grid.SelectedRows[0].Tag as string : null;
+
+    private void OpenUrl(string url)
+    {
+        try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); }
+        catch (Exception ex) { Logger.Error(ex.Message); }
+    }
+
+    /// <summary>Opens the repository's own download folder (same naming as ReleaseChecker), or the root folder if it does not exist yet.</summary>
+    private void OpenRepoFolder(string repo)
+    {
+        string dir = Path.Combine(_settings.DownloadFolder, repo.Replace('/', '_'));
+        if (Directory.Exists(dir))
+        {
+            try { Process.Start(new ProcessStartInfo(dir) { UseShellExecute = true }); }
+            catch (Exception ex) { Logger.Error(ex.Message); }
+        }
+        else OpenFolder();
     }
 
     private void UpdateTrayMenu()
@@ -1197,6 +1336,7 @@ public sealed class MainForm : Form
     private void OnFormResize(object? sender, EventArgs e)
     {
         if (WindowState == FormWindowState.Minimized) HideToTray();
+        else _restoreState = WindowState;
     }
 
     private void HideToTray()
@@ -1212,7 +1352,7 @@ public sealed class MainForm : Form
     private void RestoreFromTray()
     {
         Show();
-        if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
+        if (WindowState == FormWindowState.Minimized) WindowState = _restoreState;
         Activate();
         BringToFront();
     }
@@ -1244,10 +1384,13 @@ public sealed class MainForm : Form
         {
             Logger.LineWritten -= OnLogLine;
             Theme.Changed -= OnThemeChanged;
+            Microsoft.Win32.SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
+            _tips.Dispose();
             _timer.Dispose();
             _noticeTimer.Dispose();
             _tray.Visible = false;
             _tray.Dispose();
+            _trayIcon?.Dispose();
             _trayMenu.Dispose();
             _gridMenu.Dispose();
             _checker.Dispose();
@@ -1295,11 +1438,21 @@ public sealed class SettingsFlow : FlowLayoutPanel, IThemed
         Controls.Add(c);
     }
 
-    public void ApplyTheme() => BackColor = Theme.Current.Surface;
+    public void ApplyTheme()
+    {
+        BackColor = Theme.Current.Surface;
+        Theme.ApplyScrollbars(this); // AutoScroll uses the window's own scrollbar
+    }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        Theme.ApplyScrollbars(this);
+    }
 
     protected override void OnLayout(LayoutEventArgs levent)
     {
-        int w = ClientSize.Width - Padding.Horizontal - (VerticalScroll.Visible ? 0 : 0);
+        int w = ClientSize.Width - Padding.Horizontal;
         foreach (var c in _fullWidth)
         {
             if (c is ThemedLabel l)
@@ -1342,6 +1495,12 @@ public sealed class ConsoleBox : RichTextBox
         ForeColor = Theme.Current.ConsoleText;
     }
 
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        Theme.ApplyScrollbars(this);
+    }
+
     public void SetLines(IEnumerable<string> lines)
     {
         _lines.Clear();
@@ -1367,7 +1526,8 @@ public sealed class ConsoleBox : RichTextBox
     {
         if (IsDisposed) return;
         ApplyColors();
-        bool handle = IsHandleCreated;
+        Theme.ApplyScrollbars(this);
+        bool handle = IsHandleCreated && Visible;
         if (handle) SendMessage(Handle, WM_SETREDRAW, IntPtr.Zero, IntPtr.Zero);
         try
         {

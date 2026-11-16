@@ -27,7 +27,6 @@ public sealed class Palette
     public Color Ok { get; init; }
     public Color Warn { get; init; }
     public Color Error { get; init; }
-    public Color Info { get; init; }
 
     public Color ConsoleBg { get; init; }
     public Color ConsoleText { get; init; }
@@ -39,10 +38,10 @@ public sealed class Palette
         Surface = Hex("#181C25"),
         Raised = Hex("#202532"),
         Line = Hex("#2C3341"),
-        LineStrong = Hex("#3A4253"),
+        LineStrong = Hex("#6E788A"),    // 3.8:1 on Surface (control borders, WCAG 1.4.11)
         Text = Hex("#E4E7EC"),
         TextSecondary = Hex("#A3ACBA"),
-        TextMuted = Hex("#7D8697"),
+        TextMuted = Hex("#8E97A6"),     // >= 5.1:1 on Raised/Surface/Console
         Accent = Hex("#4CC2C4"),
         OnAccent = Hex("#0B1F21"),
         AccentHover = Hex("#6AD3D4"),
@@ -51,7 +50,6 @@ public sealed class Palette
         Ok = Hex("#5BC489"),
         Warn = Hex("#E8A33D"),
         Error = Hex("#EF6F6C"),
-        Info = Hex("#4CC2C4"),
         ConsoleBg = Hex("#0F1218"),
         ConsoleText = Hex("#C9CED6"),
     };
@@ -61,21 +59,20 @@ public sealed class Palette
         IsDark = false,
         Bg = Hex("#F2F0EB"),
         Surface = Hex("#FAF9F6"),
-        Raised = Hex("#FFFFFF"),
+        Raised = Hex("#FDFCFA"),        // no pure white
         Line = Hex("#DEDAD1"),
-        LineStrong = Hex("#C5C0B5"),
+        LineStrong = Hex("#80858F"),    // 3.5:1 on Surface, 3.6:1 on Raised
         Text = Hex("#1C2028"),
         TextSecondary = Hex("#4F5664"),
-        TextMuted = Hex("#6B7280"),
+        TextMuted = Hex("#5F6672"),     // >= 4.9:1 on Bg/Surface/Console
         Accent = Hex("#0E7C86"),
-        OnAccent = Hex("#FFFFFF"),
+        OnAccent = Hex("#FAF9F6"),      // 4.7:1 on Accent
         AccentHover = Hex("#0B6870"),
         Selection = Hex("#D5EAEA"),
         Hover = Hex("#EEECE6"),
-        Ok = Hex("#1E7F4F"),
-        Warn = Hex("#A35F00"),
+        Ok = Hex("#1A7046"),            // >= 5.1:1 on Surface/Console
+        Warn = Hex("#8F5300"),          // >= 5.2:1 on Surface/Console
         Error = Hex("#B83A36"),
-        Info = Hex("#0E7C86"),
         ConsoleBg = Hex("#EEECE6"),
         ConsoleText = Hex("#2A2F38"),
     };
@@ -101,7 +98,6 @@ public sealed class Palette
         Ok = SystemColors.WindowText,
         Warn = SystemColors.WindowText,
         Error = SystemColors.WindowText,
-        Info = SystemColors.WindowText,
         ConsoleBg = SystemColors.Window,
         ConsoleText = SystemColors.WindowText,
     };
@@ -161,10 +157,14 @@ public static class Theme
             next = dark ? Palette.Dark : Palette.Light;
         }
 
-        bool changed = !ReferenceEquals(next, Current) || next.IsHighContrast;
+        bool changed = next.IsHighContrast || Current.IsHighContrast
+            ? Signature(next) != Signature(Current)
+            : !ReferenceEquals(next, Current);
         Current = next;
         if (changed) Changed?.Invoke();
     }
+
+    private static (bool, Color, Color, Color, Color) Signature(Palette p) => (p.IsHighContrast, p.Bg, p.Text, p.Accent, p.OnAccent);
 
     /// <summary>HKCU\...\Themes\Personalize\AppsUseLightTheme (0 = dark). Missing value = light.</summary>
     public static bool SystemPrefersDark()
@@ -220,6 +220,10 @@ public static class Theme
     public static readonly Font MonoSmall = new(MonoFamily, 9f, FontStyle.Regular);
     /// <summary>Small caps captions (section titles, tile labels, column headers).</summary>
     public static readonly Font Caption = new(DisplayFamily, 9f, DisplayIsBold ? FontStyle.Bold : FontStyle.Regular);
+    /// <summary>Card section titles ("01 // REPOSITORIES"): one step above captions.</summary>
+    public static readonly Font SectionTitle = new(DisplayFamily, 11f, DisplayIsBold ? FontStyle.Bold : FontStyle.Regular);
+    /// <summary>Table column headers (Segoe semibold, deliberately not the display font).</summary>
+    public static readonly Font ColumnHeader = new(UiSemiFamily, 9f, UiSemiFamily == UiFamily ? FontStyle.Bold : FontStyle.Regular);
     /// <summary>App title in the header.</summary>
     public static readonly Font Title = new(DisplayFamily, 12f, DisplayIsBold ? FontStyle.Bold : FontStyle.Regular);
     /// <summary>Large values in the instrument tiles.</summary>
@@ -269,6 +273,15 @@ public static class Theme
             int attr = OperatingSystem.IsWindowsVersionAtLeast(10, 0, 18985) ? 20 : 19; // DWMWA_USE_IMMERSIVE_DARK_MODE
             DwmSetWindowAttribute(f.Handle, attr, ref dark, sizeof(int));
 
+            if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000) && f.Visible)
+            {
+                // Windows 10 repaints the frame only on activation changes: toggle WM_NCACTIVATE once
+                const int WM_NCACTIVATE = 0x0086;
+                bool active = Form.ActiveForm == f;
+                SendMessage(f.Handle, WM_NCACTIVATE, active ? IntPtr.Zero : (IntPtr)1, IntPtr.Zero);
+                SendMessage(f.Handle, WM_NCACTIVATE, active ? (IntPtr)1 : IntPtr.Zero, IntPtr.Zero);
+            }
+
             if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000) && !Current.IsHighContrast)
             {
                 int caption = ToColorRef(Current.Surface);
@@ -293,7 +306,8 @@ public static class Theme
     /// <summary>Runs an update without intermediate repaints (avoids flicker while re-theming).</summary>
     public static void WithoutRedraw(Control root, Action update)
     {
-        bool handle = root.IsHandleCreated;
+        // WM_SETREDRAW(TRUE) sets WS_VISIBLE: only use it on visible windows (window may be hidden in the tray)
+        bool handle = root.IsHandleCreated && root.Visible;
         if (handle) SendMessage(root.Handle, WM_SETREDRAW, IntPtr.Zero, IntPtr.Zero);
         root.SuspendLayout();
         try { update(); }

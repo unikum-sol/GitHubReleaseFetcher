@@ -113,8 +113,8 @@ public static class Ui
                 }
                 break;
             case RepoState.Checking:
-                using (var p = new Pen(pal.Accent, w)) g.DrawEllipse(p, Inflate(r, -w / 2));
-                using (var b = new SolidBrush(pal.Accent)) g.FillEllipse(b, Inflate(r, -d * 0.3f));
+                using (var p = new Pen(pal.TextSecondary, w)) g.DrawEllipse(p, Inflate(r, -w / 2));
+                using (var b = new SolidBrush(pal.TextSecondary)) g.FillEllipse(b, Inflate(r, -d * 0.3f));
                 break;
             default: // pending
                 using (var p = new Pen(pal.TextMuted, w) { DashStyle = DashStyle.Dot }) g.DrawEllipse(p, Inflate(r, -w / 2));
@@ -134,7 +134,7 @@ public static class Ui
         RepoState.Ok or RepoState.NoReleases => Tone.Ok,
         RepoState.NotReachable => Tone.Error,
         RepoState.RateLimited => Tone.Warn,
-        RepoState.Checking => Tone.Accent,
+        RepoState.Checking => Tone.Neutral,
         _ => Tone.Muted
     };
 
@@ -222,13 +222,13 @@ public sealed class CardPanel : ThemedPanel
         if (_number.Length > 0)
         {
             string num = _number + " //";
-            TextRenderer.DrawText(g, num, Theme.Caption, row, pal.Accent, Ui.Left);
-            int w = TextRenderer.MeasureText(g, num, Theme.Caption, row.Size, TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix).Width;
+            TextRenderer.DrawText(g, num, Theme.SectionTitle, row, pal.Accent, Ui.Left);
+            int w = TextRenderer.MeasureText(g, num, Theme.SectionTitle, row.Size, TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix).Width;
             row = new Rectangle(row.X + w + Ui.S(8), row.Y, row.Width - w - Ui.S(8), row.Height);
         }
-        TextRenderer.DrawText(g, _title.ToUpperInvariant(), Theme.Caption, row, pal.TextSecondary, Ui.Left);
+        TextRenderer.DrawText(g, _title.ToUpperInvariant(), Theme.SectionTitle, row, pal.Text, Ui.Left);
         if (_rightText.Length > 0)
-            TextRenderer.DrawText(g, _rightText, Theme.MonoSmall, row, pal.TextMuted,
+            TextRenderer.DrawText(g, _rightText, Theme.UiSmall, row, pal.TextMuted,
                 TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix | TextFormatFlags.SingleLine);
         // hairline under caption
         using var pen = new Pen(pal.Line);
@@ -345,7 +345,7 @@ public sealed class NoticeLine : Control, IThemed
 // Buttons
 // =====================================================================
 
-public enum ButtonKind { Primary, Secondary, Ghost }
+public enum ButtonKind { Primary, Secondary, Ghost, Danger }
 
 /// <summary>Icons drawn as vectors (no font dependency).</summary>
 public enum VectorIcon { None, ChevronUp, ChevronDown, Close }
@@ -426,6 +426,12 @@ public sealed class FlatButton : Button, IThemed
                 text = enabled ? pal.OnAccent : pal.TextMuted;
                 border = enabled ? fill : pal.Line;
                 break;
+            case ButtonKind.Danger:
+                // outline only: no second fill color next to the accent
+                fill = enabled && (_hover || _down) ? Blend(Color.FromArgb(20, pal.Error), pal.Raised) : pal.Raised;
+                text = enabled ? pal.Error : pal.TextMuted;
+                border = enabled ? pal.Error : pal.Line;
+                break;
             case ButtonKind.Ghost:
                 fill = enabled && (_hover || _down) ? pal.Hover : parent;
                 text = enabled ? pal.Text : pal.TextMuted;
@@ -466,7 +472,7 @@ public sealed class FlatButton : Button, IThemed
             TextRenderer.DrawText(g, Text, Font, new Rectangle(x, 0, Width - x - Ui.S(6), Height), text, Ui.Left | TextFormatFlags.NoPadding);
             if (_hint.Length > 0)
             {
-                Color hc = _kind == ButtonKind.Primary && enabled ? Color.FromArgb(170, pal.OnAccent) : pal.TextMuted;
+                Color hc = _kind == ButtonKind.Primary && enabled ? pal.OnAccent : pal.TextMuted;
                 TextRenderer.DrawText(g, _hint, Theme.MonoSmall, new Rectangle(x + tw + Ui.S(10), 0, Width, Height), hc, Ui.Left | TextFormatFlags.NoPadding);
             }
         }
@@ -474,13 +480,20 @@ public sealed class FlatButton : Button, IThemed
         if (Focused && ShowFocusCues)
         {
             var fr = new Rectangle(Ui.S(2), Ui.S(2), Width - Ui.S(4), Height - Ui.S(4));
-            using var p = new Pen(_kind == ButtonKind.Primary ? pal.OnAccent : pal.Accent, 1f) { DashStyle = DashStyle.Solid };
+            using var p = new Pen(_kind == ButtonKind.Primary ? pal.OnAccent : _kind == ButtonKind.Danger ? pal.Error : pal.Accent, 1f) { DashStyle = DashStyle.Solid };
             var old = g.SmoothingMode;
             g.SmoothingMode = SmoothingMode.AntiAlias;
             using var path = Ui.RoundRect(new RectangleF(fr.X + 0.5f, fr.Y + 0.5f, fr.Width - 1, fr.Height - 1), Ui.S(3));
             g.DrawPath(p, path);
             g.SmoothingMode = old;
         }
+    }
+
+    /// <summary>Flattens a semi-transparent color onto an opaque background.</summary>
+    private static Color Blend(Color top, Color under)
+    {
+        float a = top.A / 255f;
+        return Color.FromArgb((int)(top.R * a + under.R * (1 - a)), (int)(top.G * a + under.G * (1 - a)), (int)(top.B * a + under.B * (1 - a)));
     }
 
     private void DrawVector(Graphics g, Rectangle r, Color c)
@@ -541,6 +554,9 @@ public sealed class InputBox : Control, IThemed
     public InputBox()
     {
         SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+        // only the inner TextBox takes focus; a selectable wrapper would trap Shift+Tab
+        SetStyle(ControlStyles.Selectable, false);
+        TabStop = false;
         Height = Ui.S(34);
         Box.Font = Theme.Ui;
         Controls.Add(Box);
@@ -558,7 +574,8 @@ public sealed class InputBox : Control, IThemed
     [AllowNull]
     public override string Text { get => Box.Text; set => Box.Text = value ?? ""; }
 
-    protected override void OnGotFocus(EventArgs e) { base.OnGotFocus(e); Box.Focus(); }
+    protected override void OnMouseDown(MouseEventArgs e) { base.OnMouseDown(e); Box.Focus(); }
+    public new bool Focus() => Box.Focus();
     protected override void OnResize(EventArgs e) { base.OnResize(e); LayoutBox(); }
 
     private void LayoutBox()
@@ -589,7 +606,7 @@ public sealed class InputBox : Control, IThemed
         {
             // 2px focus indicator at the bottom edge
             using var b = new SolidBrush(pal.Accent);
-            e.Graphics.FillRectangle(b, Ui.S(3), Height - Ui.S(2), Width - Ui.S(6), Ui.S(2) - 1);
+            e.Graphics.FillRectangle(b, Ui.S(3), Height - Ui.S(3), Width - Ui.S(6), Ui.S(2));
         }
     }
 }
@@ -613,7 +630,11 @@ public sealed class SegmentedControl : Control, IThemed
         AccessibleRole = AccessibleRole.PageTabList;
     }
 
-    public string[] Items { get => _items; set { _items = value ?? Array.Empty<string>(); Invalidate(); } }
+    public string[] Items { get => _items; set { _items = value ?? Array.Empty<string>(); UpdateAccessibleName(); Invalidate(); } }
+
+    /// <summary>Label announced by screen readers together with the selected item.</summary>
+    public string Caption { get => _caption; set { _caption = value ?? ""; UpdateAccessibleName(); } }
+    private string _caption = "";
 
     public int SelectedIndex
     {
@@ -622,9 +643,17 @@ public sealed class SegmentedControl : Control, IThemed
         {
             if (value < -1 || value >= _items.Length || value == _selected) return;
             _selected = value;
+            UpdateAccessibleName();
             Invalidate();
             SelectedIndexChanged?.Invoke(this, EventArgs.Empty);
         }
+    }
+
+    private void UpdateAccessibleName()
+    {
+        string item = _selected >= 0 && _selected < _items.Length ? _items[_selected] : "";
+        AccessibleName = _caption.Length > 0 ? $"{_caption}: {item}" : item;
+        if (IsHandleCreated) AccessibilityNotifyClients(AccessibleEvents.NameChange, -1);
     }
 
     public void ApplyTheme() => Invalidate();
@@ -651,12 +680,14 @@ public sealed class SegmentedControl : Control, IThemed
     protected override void OnLostFocus(EventArgs e) { base.OnLostFocus(e); Invalidate(); }
 
     protected override bool IsInputKey(Keys keyData) =>
-        keyData is Keys.Left or Keys.Right || base.IsInputKey(keyData);
+        keyData is Keys.Left or Keys.Right or Keys.Home or Keys.End || base.IsInputKey(keyData);
 
     protected override void OnKeyDown(KeyEventArgs e)
     {
         if (e.KeyCode == Keys.Left && _selected > 0) SelectedIndex = _selected - 1;
         else if (e.KeyCode == Keys.Right && _selected < _items.Length - 1) SelectedIndex = _selected + 1;
+        else if (e.KeyCode == Keys.Home && _items.Length > 0) SelectedIndex = 0;
+        else if (e.KeyCode == Keys.End && _items.Length > 0) SelectedIndex = _items.Length - 1;
         base.OnKeyDown(e);
     }
 
@@ -671,8 +702,8 @@ public sealed class SegmentedControl : Control, IThemed
             var r = SegRect(i);
             bool sel = i == _selected;
             if (sel) Ui.FillRound(g, r, Ui.S(3), pal.Selection, pal.Accent);
-            else if (i == _hover) Ui.FillRound(g, r, Ui.S(3), pal.Hover, null);
-            TextRenderer.DrawText(g, _items[i], sel ? Theme.UiSemi : Theme.Ui, r, sel ? pal.Text : pal.TextSecondary,
+            else if (i == _hover) Ui.FillRound(g, r, Ui.S(3), pal.Hover, pal.IsHighContrast ? pal.Text : null);
+            TextRenderer.DrawText(g, _items[i], sel ? Theme.UiSemi : Theme.Ui, r, sel ? pal.SelectionText : pal.TextSecondary,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
             if (sel && Focused && ShowFocusCues)
             {
@@ -714,14 +745,18 @@ public sealed class Stepper : Control, IThemed
             int v = Math.Clamp(value, _min, _max);
             if (v == _value) return;
             _value = v;
-            AccessibleName = $"{v} {Unit}";
+            AccessibleName = $"{Caption} {v} {Unit}".Trim();
+            if (IsHandleCreated) AccessibilityNotifyClients(AccessibleEvents.NameChange, -1);
             Invalidate();
             ValueChanged?.Invoke(this, EventArgs.Empty);
         }
     }
 
     /// <summary>Sets the value without raising ValueChanged (initial load).</summary>
-    public void SetSilently(int v) { _value = Math.Clamp(v, _min, _max); Invalidate(); }
+    public void SetSilently(int v) { _value = Math.Clamp(v, _min, _max); AccessibleName = $"{Caption} {_value} {Unit}".Trim(); Invalidate(); }
+
+    /// <summary>Label announced by screen readers together with the value.</summary>
+    public string Caption { get; set; } = "";
 
     public void ApplyTheme() => Invalidate();
 
@@ -745,14 +780,8 @@ public sealed class Stepper : Control, IThemed
         base.OnMouseDown(e);
     }
 
-    protected override void OnMouseWheel(MouseEventArgs e)
-    {
-        Value += e.Delta > 0 ? 1 : -1;
-        base.OnMouseWheel(e);
-    }
-
     protected override bool IsInputKey(Keys keyData) =>
-        keyData is Keys.Up or Keys.Down or Keys.Left or Keys.Right || base.IsInputKey(keyData);
+        keyData is Keys.Up or Keys.Down or Keys.Left or Keys.Right or Keys.Home or Keys.End || base.IsInputKey(keyData);
 
     protected override void OnKeyDown(KeyEventArgs e)
     {
@@ -760,6 +789,8 @@ public sealed class Stepper : Control, IThemed
         else if (e.KeyCode is Keys.Down or Keys.Left) Value--;
         else if (e.KeyCode == Keys.PageUp) Value += 10;
         else if (e.KeyCode == Keys.PageDown) Value -= 10;
+        else if (e.KeyCode == Keys.Home) Value = _min;
+        else if (e.KeyCode == Keys.End) Value = _max;
         base.OnKeyDown(e);
     }
 
@@ -822,18 +853,13 @@ public sealed class HeaderBar : ThemedPanel
         var pal = Theme.Current;
         var g = e.Graphics;
         int lineH = Ui.S(2);
-        using (var b = new SolidBrush(pal.Line)) g.FillRectangle(b, 0, Height - lineH, Width, lineH);
+        // idle: 1px hairline; while checking: 2px accent progress (the line has exactly one meaning)
+        using (var b = new SolidBrush(pal.Line)) g.FillRectangle(b, 0, Height - 1, Width, 1);
         if (_progress.HasValue)
         {
             int w = (int)Math.Round(Width * Math.Clamp(_progress.Value, 0, 1));
             using var b = new SolidBrush(pal.Accent);
             g.FillRectangle(b, 0, Height - lineH, Math.Max(Ui.S(6), w), lineH);
-        }
-        else
-        {
-            // idle: short accent segment on the left = "signal" mark
-            using var b = new SolidBrush(pal.Accent);
-            g.FillRectangle(b, 0, Height - lineH, Ui.S(56), lineH);
         }
 
         int x = Padding.Left;
@@ -872,6 +898,7 @@ public sealed class StatTile : Control, IThemed
     {
         SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
         TabStop = false;
+        AccessibleRole = AccessibleRole.StaticText;
     }
 
     public void Set(string caption, string value, string sub, Tone tone = Tone.Neutral, Tone subTone = Tone.Muted, double? meter = null, RepoState? glyph = null)
@@ -891,18 +918,17 @@ public sealed class StatTile : Control, IThemed
         using (var b = new SolidBrush(Ui.ParentBack(this))) g.FillRectangle(b, ClientRectangle);
         Ui.FillRound(g, ClientRectangle, Ui.S(6), pal.Surface, pal.Line);
 
-        // corner marks (top-left / bottom-right): the single decorative "instrument" element
+        // single corner mark (top-left): the one decorative "instrument" element, never colored by state
         int cm = Ui.S(8);
-        using (var p = new Pen(_tone == Tone.Neutral ? pal.LineStrong : Ui.ToneColor(_tone), Math.Max(1f, Ui.Sf(1.5f))))
+        using (var p = new Pen(pal.LineStrong, 1f))
         {
-            int o = Ui.S(5);
+            int o = Ui.S(8);
             g.DrawLines(p, new[] { new Point(o, o + cm), new Point(o, o), new Point(o + cm, o) });
-            g.DrawLines(p, new[] { new Point(Width - o - 1 - cm, Height - o - 1), new Point(Width - o - 1, Height - o - 1), new Point(Width - o - 1, Height - o - 1 - cm) });
         }
 
         int pad = Ui.S(16);
         int y = Ui.S(12);
-        TextRenderer.DrawText(g, _caption.ToUpperInvariant(), Theme.Caption, new Rectangle(pad, y, Width - 2 * pad, Ui.S(18)), pal.TextSecondary, Ui.Left);
+        TextRenderer.DrawText(g, _caption.ToUpperInvariant(), Theme.Caption, new Rectangle(pad, y, Width - 2 * pad, Ui.S(18)), pal.TextMuted, Ui.Left);
         y += Ui.S(20);
 
         int vx = pad;
@@ -1005,6 +1031,8 @@ public class ThemedGrid : DataGridView, IThemed
         SelectionMode = DataGridViewSelectionMode.FullRowSelect;
         MultiSelect = true;
         AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+        // fill columns shrink to their minimum instead of scrolling sideways (no unthemable corner box)
+        ScrollBars = ScrollBars.Vertical;
         AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.None;
         ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
         ColumnHeadersHeight = Ui.S(36);
@@ -1012,6 +1040,9 @@ public class ThemedGrid : DataGridView, IThemed
         EnableHeadersVisualStyles = false;
         StandardTab = true;
         ShowCellToolTips = true;
+        // the inner H/V scrollbars get their handles after the grid's OnHandleCreated ran,
+        // so they are themed as soon as their own handles exist
+        foreach (Control c in Controls) c.HandleCreated += (s, _) => Theme.ApplyScrollbars((Control)s!);
         ApplyTheme();
     }
 
@@ -1032,7 +1063,7 @@ public class ThemedGrid : DataGridView, IThemed
         ColumnHeadersDefaultCellStyle.ForeColor = pal.TextSecondary;
         ColumnHeadersDefaultCellStyle.SelectionBackColor = pal.Surface;
         ColumnHeadersDefaultCellStyle.SelectionForeColor = pal.TextSecondary;
-        ColumnHeadersDefaultCellStyle.Font = Theme.Caption;
+        ColumnHeadersDefaultCellStyle.Font = Theme.ColumnHeader;
         ColumnHeadersDefaultCellStyle.Padding = new Padding(Ui.S(10), 0, Ui.S(6), 0);
         ColumnHeadersDefaultCellStyle.WrapMode = DataGridViewTriState.False;
         foreach (Control c in Controls) Theme.ApplyScrollbars(c); // inner H/V scrollbars
@@ -1058,7 +1089,7 @@ public class ThemedGrid : DataGridView, IThemed
             if (col.HeaderCell.SortGlyphDirection != SortOrder.None)
                 text += col.HeaderCell.SortGlyphDirection == SortOrder.Ascending ? "  ▲" : "  ▼";
             var r = new Rectangle(e.CellBounds.X + Ui.S(10), e.CellBounds.Y, e.CellBounds.Width - Ui.S(14), e.CellBounds.Height);
-            TextRenderer.DrawText(e.Graphics, text, Theme.Caption, r, pal.TextSecondary, Ui.Left);
+            TextRenderer.DrawText(e.Graphics, text, Theme.ColumnHeader, r, pal.TextMuted, Ui.Left);
             using (var p = new Pen(pal.LineStrong)) e.Graphics.DrawLine(p, e.CellBounds.Left, e.CellBounds.Bottom - 1, e.CellBounds.Right, e.CellBounds.Bottom - 1);
             e.Handled = true;
             return;
@@ -1084,7 +1115,7 @@ public class ThemedGrid : DataGridView, IThemed
             int gx = e.CellBounds.X + Ui.S(12);
             Ui.DrawStateGlyph(e.Graphics, state, new Rectangle(gx, e.CellBounds.Y + (e.CellBounds.Height - gs) / 2, gs, gs));
             var tr = new Rectangle(gx + gs + Ui.S(8), e.CellBounds.Y, e.CellBounds.Right - gx - gs - Ui.S(12), e.CellBounds.Height);
-            Color tc = state switch
+            Color tc = sel && pal.IsHighContrast ? pal.SelectionText : state switch
             {
                 RepoState.NotReachable => pal.Error,
                 RepoState.RateLimited => pal.Warn,
@@ -1134,8 +1165,9 @@ public sealed class ThemedMenuRenderer : ToolStripProfessionalRenderer
     protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e)
     {
         var pal = Theme.Current;
-        e.TextColor = !e.Item.Enabled ? pal.TextSecondary : pal.Text;
-        e.TextFont = e.Item.Enabled ? Theme.Ui : Theme.UiSmall;
+        bool info = Equals(e.Item.Tag, "info");
+        e.TextColor = info ? pal.TextSecondary : !e.Item.Enabled ? pal.TextMuted : (e.Item.Selected ? pal.SelectionText : pal.Text);
+        e.TextFont = info ? Theme.UiSmall : Theme.Ui;
         base.OnRenderItemText(e);
     }
 
@@ -1217,7 +1249,7 @@ public sealed class ThemedDialog : Form
         lblMsg.Size = new Size(width - textX - pad, Math.Max(Ui.S(24), msgSize.Height + Ui.S(4)));
 
         int btnY = lblMsg.Bottom + Ui.S(24);
-        var ok = new FlatButton { Kind = ButtonKind.Primary, Text = okText, AutoSize = false, DialogResult = yesNo ? DialogResult.Yes : DialogResult.OK };
+        var ok = new FlatButton { Kind = yesNo ? ButtonKind.Danger : ButtonKind.Primary, Text = okText, AutoSize = false, DialogResult = yesNo ? DialogResult.Yes : DialogResult.OK };
         ok.Size = ok.GetPreferredSize(Size.Empty);
         ok.Width = Math.Max(ok.Width, Ui.S(96));
         Controls.Add(lblGlyph);
