@@ -359,18 +359,21 @@ public sealed class ReleaseChecker : IDisposable
             bool viaApi = (useToken && a.ApiUrl.Length > 0) || a.BrowserUrl.Length == 0;
             string url = viaApi ? a.ApiUrl : a.BrowserUrl;
             string target = Path.Combine(relDir, SanitizeName(a.Name));
-            await DownloadFileAsync(repo, url, target, a.Size, viaApi, token, result, ct).ConfigureAwait(false);
+            // the asset API endpoint requires "Accept: application/octet-stream" to return the binary file
+            await DownloadFileAsync(repo, url, target, a.Size, viaApi, octet: true, token, result, ct).ConfigureAwait(false);
         }
 
         // source code
+        // zipball/tarball endpoints reject "Accept: application/octet-stream" with HTTP 415,
+        // so they are requested with the default GitHub media type (application/vnd.github+json).
         string repoName = SanitizeName(repo.Split('/')[1]);
         if (rel.ZipUrl.Length > 0)
-            await DownloadFileAsync(repo, rel.ZipUrl, Path.Combine(relDir, $"{repoName}-{tagSafe}-source.zip"), -1, true, token, result, ct).ConfigureAwait(false);
+            await DownloadFileAsync(repo, rel.ZipUrl, Path.Combine(relDir, $"{repoName}-{tagSafe}-source.zip"), -1, true, octet: false, token, result, ct).ConfigureAwait(false);
         if (rel.TarUrl.Length > 0)
-            await DownloadFileAsync(repo, rel.TarUrl, Path.Combine(relDir, $"{repoName}-{tagSafe}-source.tar.gz"), -1, true, token, result, ct).ConfigureAwait(false);
+            await DownloadFileAsync(repo, rel.TarUrl, Path.Combine(relDir, $"{repoName}-{tagSafe}-source.tar.gz"), -1, true, octet: false, token, result, ct).ConfigureAwait(false);
     }
 
-    private async Task DownloadFileAsync(string repo, string url, string target, long expectedSize, bool viaApi,
+    private async Task DownloadFileAsync(string repo, string url, string target, long expectedSize, bool viaApi, bool octet,
         string token, RepoCheckResult result, CancellationToken ct)
     {
         string fileName = Path.GetFileName(target);
@@ -401,7 +404,7 @@ public sealed class ReleaseChecker : IDisposable
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             cts.CancelAfter(DownloadTimeout);
             using var req = new HttpRequestMessage(HttpMethod.Get, url);
-            if (viaApi) AddApiHeaders(req, token, octet: true);
+            if (viaApi) AddApiHeaders(req, token, octet);
             else if (!string.IsNullOrEmpty(token) && IsGitHubHost(url))
                 req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
