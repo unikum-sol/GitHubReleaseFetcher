@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace GitHubReleaseFetcher;
 
@@ -57,6 +58,13 @@ public sealed class ReleaseChecker : IDisposable
 {
     public const string ReleasesFolder = "Releases";
     public const string PreReleasesFolder = "Pre-Releases";
+    /// <summary>Dated source snapshots of repositories without any release.</summary>
+    public const string SnapshotsFolder = "Snapshots";
+    /// <summary>Only the newest snapshots are kept.</summary>
+    public const int SnapshotsToKeep = 3;
+
+    // snapshot folder: "<local date>_<time>_<short commit>", e.g. "2026-11-24_15-30_abc1234" (sorts chronologically)
+    private static readonly Regex SnapshotDirPattern = new(@"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}(-\d{2})?_([0-9a-f]{7,40})$", RegexOptions.CultureInvariant);
 
     private static readonly TimeSpan ApiTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan DownloadTimeout = TimeSpan.FromHours(2);
@@ -253,9 +261,24 @@ public sealed class ReleaseChecker : IDisposable
 
         if (stable == null && pre == null)
         {
+            // no release yet: keep dated source snapshots of the default branch instead
             result.State = RepoState.NoReleases;
-            result.Details = Lang.Get("details_uptodate");
             Logger.Info(Lang.F("log_repo_noreleases", repo));
+            string snapRepoDir = Path.Combine(downloadRoot, repo.Replace('/', '_'));
+            try
+            {
+                await SnapshotAsync(repo, snapRepoDir, token, result, ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                result.FailedFiles++;
+                result.Details = Lang.F("details_failed", 1);
+                Logger.Error(Lang.F("log_snapshot_fail", repo, ex.GetBaseException().Message));
+            }
             return result;
         }
 
@@ -287,6 +310,133 @@ public sealed class ReleaseChecker : IDisposable
         if (parts.Count == 0) parts.Add(Lang.Get("details_uptodate"));
         result.Details = string.Join(", ", parts);
         return result;
+    }
+
+    /// <summary>
+    /// Saves the default branch as a dated ZIP when it changed since the newest snapshot
+    /// (one API request per check, plus the download when something changed) and keeps
+    /// only the newest <see cref="SnapshotsToKeep"/> snapshots.
+    /// </summary>
+    private async Task SnapshotAsync(string repo, string repoDir, string token, RepoCheckResult result, CancellationToken ct)
+    {
+        // newest commit of the default branch
+        string sha;
+        using (var cts = CancellationTokenSource.CreateLinkedTokenSource(ct))
+        {
+            cts.CancelAfter(ApiTimeout);
+            using var req = new HttpRequestMessage(HttpMethod.Get, $"https://api.github.com/repos/{repo}/commits?per_page=1");
+            AddApiHeaders(req, token);
+            using var resp = await _http.SendAsync(req, HttpCompletionOption.ResponseContentRead, cts.Token).ConfigureAwait(false);
+            ReadRateHeaders(resp);
+
+            if (resp.StatusCode == HttpStatusCode.Conflict) // empty repository: nothing to save
+            {
+                result.Details = Lang.Get("details_snapshot_empty");
+                Logger.Info(Lang.F("log_snapshot_empty", repo));
+                return;
+            }
+            if (!resp.IsSuccessStatusCode)
+            {
+                var pause = GetRateLimitPause(resp);
+                if (pause.HasValue)
+                {
+                    result.State = RepoState.RateLimited;
+                    result.RateLimitedUntilUtc = pause.Value.AddSeconds(30);
+                    result.Details = Lang.F("msg_rate_wait", result.RateLimitedUntilUtc.Value.ToLocalTime().ToString("g"));
+                    Logger.Warn(Lang.F("log_repo_ratelimited", repo, result.RateLimitedUntilUtc.Value.ToLocalTime().ToString("g")));
+                    return;
+                }
+                result.FailedFiles++;
+                result.Details = Lang.F("details_failed", 1);
+                Logger.Error(Lang.F("log_snapshot_fail", repo, $"HTTP {(int)resp.StatusCode}"));
+                return;
+            }
+
+            string json = await resp.Content.ReadAsStringAsync(cts.Token).ConfigureAwait(false);
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            sha = root.ValueKind == JsonValueKind.Array && root.GetArrayLength() > 0 ? Str(root[0], "sha").ToLowerInvariant() : "";
+        }
+        if (!Regex.IsMatch(sha, "^[0-9a-f]{7,40}$"))
+        {
+            result.Details = Lang.Get("details_snapshot_empty");
+            Logger.Info(Lang.F("log_snapshot_empty", repo));
+            return;
+        }
+        string shortSha = sha.Substring(0, 7);
+
+        string snapRoot = Path.Combine(repoDir, SnapshotsFolder);
+        var existing = ListSnapshots(snapRoot);
+        var newest = existing.FirstOrDefault(s => s.Complete);
+        if (newest.Dir != null && sha.StartsWith(newest.Sha, StringComparison.Ordinal))
+        {
+            result.Details = Lang.F("details_snapshot_current", shortSha);
+            Logger.Info(Lang.F("log_snapshot_current", repo, shortSha));
+            PruneSnapshots(repo, snapRoot);
+            return;
+        }
+
+        // changed (or first snapshot): new dated folder with the ZIP of exactly this commit
+        Logger.Info(Lang.F(newest.Dir == null ? "log_snapshot_first" : "log_snapshot_changed", repo, shortSha));
+        DateTime now = DateTime.Now;
+        string dirName = $"{now:yyyy-MM-dd_HH-mm}_{shortSha}";
+        string dir = Path.Combine(snapRoot, dirName);
+        if (Directory.Exists(dir)) dir = Path.Combine(snapRoot, $"{now:yyyy-MM-dd_HH-mm-ss}_{shortSha}");
+        Directory.CreateDirectory(dir);
+
+        string repoName = SanitizeName(repo.Split('/')[1]);
+        string target = Path.Combine(dir, $"{repoName}-{now:yyyy-MM-dd}-{shortSha}.zip");
+        int failedBefore = result.FailedFiles;
+        // zipball rejects "Accept: application/octet-stream" (HTTP 415) -> default GitHub media type
+        await DownloadFileAsync(repo, $"https://api.github.com/repos/{repo}/zipball/{sha}", target, -1, true, octet: false, token, result, ct).ConfigureAwait(false);
+
+        if (result.FailedFiles > failedBefore || !File.Exists(target))
+        {
+            TryDeleteDir(dir); // never leave an incomplete snapshot behind
+            result.Details = Lang.F("details_failed", 1);
+            return;
+        }
+        result.Details = Lang.F("details_snapshot_new", shortSha);
+        PruneSnapshots(repo, snapRoot);
+    }
+
+    private readonly record struct SnapshotDir(string? Dir, string Sha, bool Complete);
+
+    /// <summary>Snapshot folders created by this program, newest first. Other folders are ignored (never touched).</summary>
+    private static List<SnapshotDir> ListSnapshots(string snapRoot)
+    {
+        var list = new List<SnapshotDir>();
+        if (!Directory.Exists(snapRoot)) return list;
+        foreach (var d in Directory.GetDirectories(snapRoot))
+        {
+            var m = SnapshotDirPattern.Match(Path.GetFileName(d));
+            if (!m.Success) continue;
+            bool complete = Directory.EnumerateFiles(d, "*.zip").Any();
+            list.Add(new SnapshotDir(d, m.Groups[2].Value, complete));
+        }
+        return list.OrderByDescending(s => Path.GetFileName(s.Dir), StringComparer.Ordinal).ToList();
+    }
+
+    /// <summary>Keeps the newest complete snapshots and removes older ones plus leftovers of aborted downloads.</summary>
+    private static void PruneSnapshots(string repo, string snapRoot)
+    {
+        int kept = 0;
+        foreach (var s in ListSnapshots(snapRoot))
+        {
+            if (s.Complete && kept < SnapshotsToKeep) { kept++; continue; }
+            if (TryDeleteDir(s.Dir!)) Logger.Info(Lang.F("log_snapshot_removed", repo, Path.GetFileName(s.Dir)));
+            else Logger.Warn(Lang.F("log_snapshot_remove_fail", repo, Path.GetFileName(s.Dir)));
+        }
+    }
+
+    private static bool TryDeleteDir(string dir)
+    {
+        try
+        {
+            if (Directory.Exists(dir)) Directory.Delete(dir, true);
+            return true;
+        }
+        catch { return false; }
     }
 
     private static List<ReleaseInfo> ParseReleases(string json)

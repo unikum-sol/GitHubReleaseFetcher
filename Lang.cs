@@ -194,6 +194,20 @@ public static class Lang
         ["details_files"] = ("{0} new file(s)", "{0} neue Datei(en)"),
         ["details_failed"] = ("{0} download(s) failed", "{0} Download(s) fehlgeschlagen"),
         ["details_uptodate"] = ("up to date", "aktuell"),
+        ["details_snapshot_new"] = ("new snapshot {0}", "neuer Snapshot {0}"),
+        ["details_snapshot_current"] = ("snapshot {0} up to date", "Snapshot {0} aktuell"),
+        ["details_snapshot_empty"] = ("empty repository – nothing to save", "leeres Repository – nichts zu sichern"),
+        ["log_snapshot_first"] = ("[{0}] No release – saving the repository as a dated snapshot (commit {1}).",
+                                  "[{0}] Kein Release – Repository wird als Snapshot mit Datum gesichert (Commit {1})."),
+        ["log_snapshot_changed"] = ("[{0}] Repository changed (commit {1}) – saving a new snapshot.",
+                                    "[{0}] Repository geändert (Commit {1}) – neuer Snapshot wird gesichert."),
+        ["log_snapshot_current"] = ("[{0}] Snapshot is up to date (commit {1}).", "[{0}] Snapshot ist aktuell (Commit {1})."),
+        ["log_snapshot_removed"] = ("[{0}] Old snapshot removed (only the newest 3 are kept): {1}",
+                                    "[{0}] Alter Snapshot entfernt (nur die neuesten 3 bleiben): {1}"),
+        ["log_snapshot_remove_fail"] = ("[{0}] Old snapshot could not be removed: {1}", "[{0}] Alter Snapshot konnte nicht entfernt werden: {1}"),
+        ["log_snapshot_empty"] = ("[{0}] Repository is empty – no snapshot.", "[{0}] Repository ist leer – kein Snapshot."),
+        ["log_snapshot_fail"] = ("[{0}] Snapshot failed: {1} (will be retried at next check)",
+                                 "[{0}] Snapshot fehlgeschlagen: {1} (wird bei nächster Prüfung erneut versucht)"),
     };
 
     public static string Get(string key) =>

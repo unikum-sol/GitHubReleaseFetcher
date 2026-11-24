@@ -35,7 +35,8 @@ A small Windows tray tool (C# / .NET 8 WinForms) that automatically downloads th
 - Collapsible **activity console** (warnings and errors colored) and inline notices instead of message boxes
 - Keyboard: **F5** check now, **Esc** close settings, **Del** remove selected, **Enter** add repository / save token
 - **Log file with timestamps** covering the last month (older entries are removed automatically), openable via button
-- Already downloaded files are skipped; **nothing is deleted**
+- **Repositories without any release** are saved as dated **snapshots**: the default branch is downloaded as a ZIP. A new snapshot is only made when the repository changed (new commit), and only the **3 newest snapshots** are kept
+- Already downloaded files are skipped; release files are **never deleted** (only old snapshots beyond the newest 3 are removed)
 
 ### Folder structure
 
@@ -47,18 +48,25 @@ A small Windows tray tool (C# / .NET 8 WinForms) that automatically downloads th
     │       ├── asset-file.exe
     │       ├── repo-v1.2.3-source.zip
     │       └── repo-v1.2.3-source.tar.gz
-    └── Pre-Releases\
-        └── v1.3.0-beta1\
-            └── ...
+    ├── Pre-Releases\
+    │   └── v1.3.0-beta1\
+    │       └── ...
+    └── Snapshots\                         (only for repositories without a release)
+        ├── 2026-11-20_08-15_3f2a9c1\
+        │   └── repo-2026-11-20-3f2a9c1.zip
+        └── 2026-11-24_07-55_9b8e4d0\
+            └── repo-2026-11-24-9b8e4d0.zip
 ```
 
 Every new release gets its own subfolder, old release folders are kept. Folder names are always English (independent of the UI language).
+
+**Snapshots** are named `<date>_<time>_<commit>` (local time of the download, short commit ID). At each check the newest commit of the default branch is compared with the newest snapshot; only if it differs, a new snapshot folder is created. Older snapshots beyond the newest 3 are removed automatically – other folders you put into `Snapshots\` are never touched. As soon as the repository publishes a release, the normal release download takes over and the existing snapshots are kept.
 
 ### GitHub API limit / check interval
 
 GitHub allows **60 API requests per hour per IP address** without a token and **5,000 per hour** with a personal access token (see [GitHub Docs – Rate limits for the REST API](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api)).
 
-Each check needs 1 request per repository, plus 2 requests (source code zip/tar.gz) only when a new release has to be downloaded. To stay safely below the limit, the tool:
+Each check needs 1 request per repository (repositories without a release: 2), plus 2 requests (source code zip/tar.gz) only when a new release has to be downloaded, or 1 request for a new snapshot. To stay safely below the limit, the tool:
 
 - uses only ~80 % of the budget and **raises the effective interval automatically** if the selected interval is too short for the number of repositories (shown in the GUI),
 - waits 1.5 s between repositories,
@@ -134,7 +142,8 @@ Screenshots: siehe [oben](#english) bzw. [`docs/screenshots`](docs/screenshots).
 - Einklappbare **Aktivitäts-Konsole** (Warnungen und Fehler farbig) und Hinweise direkt im Fenster statt Meldungsfenstern
 - Tastatur: **F5** jetzt prüfen, **Esc** Einstellungen schließen, **Entf** Auswahl entfernen, **Enter** Repository hinzufügen / Token speichern
 - **Log-Datei mit Zeitstempeln** über den letzten Monat (ältere Einträge werden automatisch entfernt), per Button zu öffnen
-- Bereits heruntergeladene Dateien werden übersprungen; **es wird nichts gelöscht**
+- **Repositories ohne Release** werden als **Snapshots mit Datum** gesichert: Der Standard-Branch wird als ZIP heruntergeladen. Ein neuer Snapshot entsteht nur, wenn sich das Repository geändert hat (neuer Commit), und es bleiben nur die **3 neuesten Snapshots** erhalten
+- Bereits heruntergeladene Dateien werden übersprungen; Release-Dateien werden **nie gelöscht** (entfernt werden nur alte Snapshots über die neuesten 3 hinaus)
 
 ### Ordnerstruktur
 
@@ -146,18 +155,25 @@ Screenshots: siehe [oben](#english) bzw. [`docs/screenshots`](docs/screenshots).
     │       ├── asset-datei.exe
     │       ├── repo-v1.2.3-source.zip
     │       └── repo-v1.2.3-source.tar.gz
-    └── Pre-Releases\
-        └── v1.3.0-beta1\
-            └── ...
+    ├── Pre-Releases\
+    │   └── v1.3.0-beta1\
+    │       └── ...
+    └── Snapshots\                         (nur bei Repositories ohne Release)
+        ├── 2026-11-20_08-15_3f2a9c1\
+        │   └── repo-2026-11-20-3f2a9c1.zip
+        └── 2026-11-24_07-55_9b8e4d0\
+            └── repo-2026-11-24-9b8e4d0.zip
 ```
 
 Jeder neue Release bekommt einen eigenen Unterordner, alte Release-Ordner bleiben erhalten. Die Ordnernamen sind immer englisch (unabhängig von der Oberflächensprache).
+
+**Snapshots** heißen `<Datum>_<Uhrzeit>_<Commit>` (Ortszeit des Downloads, kurze Commit-ID). Bei jeder Prüfung wird der neueste Commit des Standard-Branches mit dem neuesten Snapshot verglichen; nur wenn er abweicht, entsteht ein neuer Snapshot-Ordner. Ältere Snapshots über die neuesten 3 hinaus werden automatisch entfernt – andere Ordner, die du selbst in `Snapshots\` ablegst, werden nie angefasst. Sobald das Repository einen Release veröffentlicht, übernimmt der normale Release-Download; die vorhandenen Snapshots bleiben erhalten.
 
 ### GitHub-API-Limit / Prüfintervall
 
 GitHub erlaubt ohne Token **60 API-Anfragen pro Stunde und IP-Adresse**, mit persönlichem Access-Token **5.000 pro Stunde** (siehe [GitHub Docs – Rate limits for the REST API](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api)).
 
-Jede Prüfung braucht 1 Anfrage pro Repository, plus 2 Anfragen (Quellcode zip/tar.gz) nur dann, wenn ein neuer Release heruntergeladen werden muss. Um sicher unter dem Limit zu bleiben:
+Jede Prüfung braucht 1 Anfrage pro Repository (Repositories ohne Release: 2), plus 2 Anfragen (Quellcode zip/tar.gz) nur dann, wenn ein neuer Release heruntergeladen werden muss, bzw. 1 Anfrage für einen neuen Snapshot. Um sicher unter dem Limit zu bleiben:
 
 - nutzt das Tool nur ca. 80 % des Kontingents und **erhöht das effektive Intervall automatisch**, wenn das gewählte Intervall für die Anzahl der Repositories zu kurz ist (wird in der GUI angezeigt),
 - wartet 1,5 s zwischen den Repositories,
